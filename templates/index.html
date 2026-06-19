@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>DocuDiff</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}" />
+</head>
+<body>
+  <div class="app">
+
+    <!-- Top bar -->
+    <header class="topbar">
+      <div class="brand">
+        <div class="mark">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>
+            <path d="M8 13h2M8 17h2"/><path d="m14 12 3 3-3 3"/>
+          </svg>
+        </div>
+        <div>
+          <h1>DocuDiff</h1>
+          <p class="tag">Identify differences across PDF and Word files instantly</p>
+        </div>
+      </div>
+      <div class="spacer"></div>
+      
+      <!-- Theme Toggle -->
+      <button id="themeToggle" class="btn ghost" title="Toggle Dark Mode" style="margin-right: 16px;">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>
+      </button>
+
+      <!-- Result-only controls -->
+      <div id="resultControls" class="hidden" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+        <div class="control-group">
+            <label>Zoom (L):</label>
+            <input type="range" id="zoomLeft" min="33" max="300" value="100">
+            <span id="zoomLeftLbl">100%</span>
+        </div>
+        <div class="control-group">
+            <label>Zoom (R):</label>
+            <input type="range" id="zoomRight" min="33" max="300" value="100">
+            <span id="zoomRightLbl">100%</span>
+        </div>
+        <button id="prevBtn" class="btn" title="Previous Change">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg>
+          Prev.
+        </button>
+        <button id="nextBtn" class="btn" title="Next Change">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+          Next
+        </button>
+        <div class="control-group checkbox-group">
+            <label class="custom-checkbox">
+                <input type="checkbox" id="syncScroll" checked>
+                <span class="checkmark"></span>
+                Sync Scroll
+            </label>
+            <label class="custom-checkbox">
+                <input type="checkbox" id="syncZoom" checked>
+                <span class="checkmark"></span>
+                Sync Zoom
+            </label>
+        </div>
+        <button id="newBtn" class="btn ghost" title="Compare new files">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          New
+        </button>
+      </div>
+    </header>
+
+    <!-- Uploader state -->
+    <section id="uploader" class="uploader">
+      <div class="settings-bar">
+          <label class="custom-checkbox">
+              <input type="checkbox" id="caseInsensitive" checked>
+              <span class="checkmark"></span>
+              Case Insensitive
+          </label>
+          <label class="custom-checkbox">
+              <input type="checkbox" id="ignoreQuotes" checked>
+              <span class="checkmark"></span>
+              Ignore Quotes
+          </label>
+          <label class="custom-checkbox">
+              <input type="checkbox" id="ignoreLigatures" checked>
+              <span class="checkmark"></span>
+              Ignore 'f' ligatures
+          </label>
+          <label class="custom-checkbox">
+              <input type="checkbox" id="darkMode">
+              <span class="checkmark"></span>
+              Dark Mode Annotations
+          </label>
+      </div>
+      <div class="drop-container">
+          <div id="dropOriginal" class="dropzone">
+            <div class="ic">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+            </div>
+            <h2>Original Document</h2>
+            <p>Drag &amp; drop, or <strong>click to browse</strong></p>
+            <input type="file" id="fileOriginal" accept="application/pdf,.pdf,.docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document" />
+            <div class="file-name" id="nameOriginal"></div>
+          </div>
+
+          <div id="dropModified" class="dropzone">
+            <div class="ic">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+            </div>
+            <h2>Modified Document</h2>
+            <p>Drag &amp; drop, or <strong>click to browse</strong></p>
+            <input type="file" id="fileModified" accept="application/pdf,.pdf,.docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document" />
+            <div class="file-name" id="nameModified"></div>
+          </div>
+      </div>
+      
+      <div class="action-bar">
+          <button id="compareBtn" class="btn primary disabled">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21 16-4 4-4-4"/><path d="M17 20V4"/><path d="m3 8 4-4 4 4"/><path d="M7 4v16"/></svg>
+              Compare Documents
+          </button>
+      </div>
+    </section>
+
+    <!-- Loading state -->
+    <div id="loading" class="loading hidden">
+      <div class="spinner"></div>
+      <div>Analyzing Differences & Generating Preview…</div>
+    </div>
+
+    <!-- Result state -->
+    <section id="result" class="result hidden">
+      <div class="toolbar">
+        <div class="fileinfo">
+          <div class="fic" style="color: #e74c3c;">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+          </div>
+          <span class="name">Original</span>
+        </div>
+        <div id="stats" class="stats"></div>
+        <div class="fileinfo">
+          <div class="fic" style="color: #2ecc71;">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+          </div>
+          <span class="name">Modified</span>
+        </div>
+      </div>
+
+      <div id="panes" class="panes" data-view="split">
+        <div class="pane pane-raw" id="leftWrapper">
+            <div class="pane-content" id="leftContent"></div>
+        </div>
+        <div id="divider" class="divider"></div>
+        <div class="pane pane-preview" id="rightWrapper">
+            <div class="pane-content" id="rightContent"></div>
+        </div>
+      </div>
+    </section>
+
+    <div id="toast" class="toast"></div>
+  </div>
+
+  <script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>
