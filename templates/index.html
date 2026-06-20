@@ -1,166 +1,942 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>DocuDiff</title>
-  <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}" />
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DocuDiff — AI-Powered Document Diff</title>
+    <style>
+        /* ── Design tokens (Light Theme) ───────────────────────── */
+        :root {
+            --bg:           #0D1117;
+            --surface:      #161B22;
+            --surface-2:    #1C2128;
+            --border:       #30363D;
+            --border-muted: #21262D;
+            --text:         #E6EDF3;
+            --text-muted:   #8B949E;
+            --accent:       #2F81F7;
+            --accent-dim:   rgba(47, 129, 247, 0.12);
+            --red:          #F85149;
+            --red-dim:      rgba(248, 81, 73, 0.12);
+            --green:        #3FB950;
+            --green-dim:    rgba(63, 185, 80, 0.12);
+            --amber:        #D29922;
+            --amber-dim:    rgba(210, 153, 34, 0.10);
+            --radius:       6px;
+            --font-ui:      'Inter', system-ui, -apple-system, sans-serif;
+            --font-mono:    'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+        }
+
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            font-family: var(--font-ui);
+            background: var(--bg);
+            color: var(--text);
+            font-size: 14px;
+            line-height: 1.5;
+            height: 100vh;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+
+
+        /* ── Header ───────────────────────────────────────────── */
+        .header {
+            background: var(--surface);
+            border-bottom: 1px solid var(--border);
+            padding: 0 20px;
+            height: 52px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            flex-shrink: 0;
+        }
+        .header-logo {
+            font-size: 15px;
+            font-weight: 600;
+            letter-spacing: -0.02em;
+            color: var(--text);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            cursor: pointer;
+        }
+        .header-logo-icon { color: var(--accent); }
+        .header-sep {
+            width: 1px;
+            height: 20px;
+            background: var(--border);
+            flex-shrink: 0;
+        }
+        .header-sub { font-size: 12px; color: var(--text-muted); }
+
+        /* ── Buttons ──────────────────────────────────────────── */
+        .btn {
+            padding: 6px 16px;
+            border-radius: var(--radius);
+            border: 1px solid transparent;
+            font-size: 13px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: opacity 0.15s, background 0.15s, border-color 0.15s;
+            font-family: var(--font-ui);
+            white-space: nowrap;
+            flex-shrink: 0;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .btn:disabled { opacity: 0.40; cursor: not-allowed; }
+        .btn-primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+        .btn-primary:not(:disabled):hover { opacity: 0.85; }
+
+        /* ── Home Page / Uploader ─────────────────────────────── */
+        .uploader {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 40px;
+            gap: 24px;
+            overflow-y: auto;
+        }
+        .uploader.hidden { display: none !important; }
+
+        .settings-bar {
+            display: flex;
+            gap: 20px;
+            background: var(--surface);
+            padding: 14px 24px;
+            border-radius: var(--radius);
+            border: 1px solid var(--border);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+
+        .opt-label {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 13px;
+            color: var(--text-muted);
+            cursor: pointer;
+            user-select: none;
+            transition: color 0.12s;
+        }
+        .opt-label:hover { color: var(--text); }
+        .opt-label input[type="checkbox"] {
+            accent-color: var(--accent);
+            cursor: pointer;
+            width: 14px;
+            height: 14px;
+        }
+
+        .drop-container {
+            display: flex;
+            gap: 24px;
+            width: 100%;
+            max-width: 800px;
+        }
+
+        .dropzone {
+            flex: 1;
+            border: 2px dashed var(--border);
+            border-radius: 12px;
+            background: var(--surface);
+            padding: 48px 20px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .dropzone:hover, .dropzone.dragover {
+            border-color: var(--accent);
+            background: var(--accent-dim);
+        }
+        .drop-ic {
+            color: var(--text-muted);
+            margin-bottom: 16px;
+            display: flex;
+            justify-content: center;
+        }
+        .dropzone h2 { font-size: 15px; margin-bottom: 6px; color: var(--text); }
+        .dropzone p { font-size: 13px; color: var(--text-muted); margin-bottom: 0; }
+        .dropzone input[type="file"] { display: none; }
+        .file-name { font-size: 13px; font-weight: 600; color: var(--accent); display: block; margin-top: 12px; }
+
+        .error-toast {
+            display: none;
+            background: var(--red-dim);
+            border: 1px solid rgba(207, 34, 46, 0.30);
+            border-radius: var(--radius);
+            color: var(--red);
+            padding: 8px 16px;
+            font-size: 13px;
+            max-width: 400px;
+            text-align: center;
+        }
+        .error-toast.visible { display: block; }
+
+        /* ── Full Screen Loader ───────────────────────────────── */
+        .loader-container {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 20px;
+        }
+        .loader-container.hidden { display: none !important; }
+
+        .spinner-large {
+            width: 44px;
+            height: 44px;
+            border: 3px solid var(--border);
+            border-top-color: var(--accent);
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+        .loader-text {
+            font-size: 14px;
+            color: var(--text-muted);
+            font-weight: 500;
+        }
+
+        /* ── Stats Bar ────────────────────────────────────────── */
+        .stats-bar {
+            background: var(--surface-2);
+            border-bottom: 1px solid var(--border-muted);
+            padding: 6px 20px;
+            display: none;
+            align-items: center;
+            gap: 12px;
+            flex-shrink: 0;
+            min-height: 38px;
+            overflow-x: auto;
+        }
+        .stats-bar.visible { display: flex; }
+
+        .stat-chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            font-size: 12px;
+            font-weight: 600;
+            padding: 2px 10px;
+            border-radius: 20px;
+        }
+        .chip-del { background: var(--red-dim); color: var(--red); border: 1px solid rgba(207, 34, 46, 0.25); }
+        .chip-ins { background: var(--green-dim); color: var(--green); border: 1px solid rgba(26, 127, 55, 0.25); }
+
+        .sync-label {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            font-size: 12px;
+            color: var(--text-muted);
+            cursor: pointer;
+            user-select: none;
+            padding: 3px 8px;
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            background: var(--surface-2);
+            transition: border-color 0.15s;
+        }
+        .sync-label:hover { border-color: var(--accent); color: var(--text); }
+        .sync-label input[type="checkbox"] { accent-color: var(--accent); cursor: pointer; width: 13px; height: 13px; }
+        .sync-label:has(input:not(:checked)) { opacity: 0.55; }
+
+
+
+        .btn-ai {
+            background: var(--amber-dim); color: var(--amber); border: 1px solid rgba(154, 103, 0, 0.30);
+            display: none; align-items: center; gap: 5px; font-size: 12px; font-weight: 500; padding: 3px 10px; border-radius: var(--radius); cursor: pointer; transition: background 0.15s;
+        }
+        .btn-ai.visible { display: inline-flex; }
+        .btn-ai:hover { background: rgba(154, 103, 0, 0.18); }
+
+        .nav-group { display: flex; align-items: center; gap: 6px; margin-left: auto; }
+        .nav-counter { font-size: 12px; color: var(--text-muted); min-width: 90px; text-align: right; }
+        .btn-nav { background: var(--surface); color: var(--text); border: 1px solid var(--border); padding: 3px 10px; font-size: 12px; border-radius: var(--radius); cursor: pointer; }
+        .btn-nav:disabled { opacity: 0.5; cursor: not-allowed; }
+        .btn-nav:not(:disabled):hover { border-color: var(--accent); color: var(--accent); }
+
+        /* ── Viewer ───────────────────────────────────────────── */
+        .viewer {
+            flex: 1;
+            display: none;
+            overflow: hidden;
+            min-height: 0;
+        }
+        .viewer.visible { display: flex; }
+        .viewer-column {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            min-width: 0;
+        }
+
+        .doc-panel {
+            flex: 1;
+            overflow-y: auto;
+            overflow-x: auto;
+            background: #111318;
+            position: relative;
+            min-width: 0;
+        }
+        .doc-panel::-webkit-scrollbar { width: 6px; height: 6px; }
+        .doc-panel::-webkit-scrollbar-track { background: transparent; }
+        .doc-panel::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+        .panel-header {
+            background: rgba(22, 27, 34, 0.92);
+            backdrop-filter: blur(8px);
+            -webkit-backdrop-filter: blur(8px);
+            border-bottom: 1px solid var(--border-muted);
+            padding: 5px 14px;
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.07em;
+            color: var(--text-muted);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        .panel-zoom-controls {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            text-transform: none;
+            letter-spacing: normal;
+        }
+        .zoom-slider {
+            -webkit-appearance: none;
+            width: 80px;
+            height: 4px;
+            background: var(--border);
+            border-radius: 2px;
+            outline: none;
+        }
+        .zoom-slider::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: var(--accent);
+            cursor: pointer;
+        }
+        .zoom-label {
+            font-size: 11px;
+            font-weight: 600;
+            color: var(--text-muted);
+            min-width: 36px;
+            text-align: right;
+            font-variant-numeric: tabular-nums;
+        }
+        .btn-zoom-reset-small {
+            background: none;
+            border: none;
+            color: var(--text-muted);
+            font-size: 14px;
+            cursor: pointer;
+            padding: 2px 4px;
+        }
+        .btn-zoom-reset-small:hover { color: var(--text); }
+        .panel-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+        #panel-left .panel-dot { background: var(--red); }
+        #panel-right .panel-dot { background: var(--green); }
+
+        .doc-pages {
+            padding: 12px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            align-items: center;
+        }
+        .doc-pages img {
+            display: block;
+            max-width: none;
+            width: 100%;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
+            border-radius: 2px;
+        }
+        .panel-divider { width: 2px; background: var(--border); flex-shrink: 0; }
+
+        /* ── Modal Overlay System ──────────────────────────────── */
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.65);
+            backdrop-filter: blur(4px);
+            -webkit-backdrop-filter: blur(4px);
+            z-index: 100;
+            align-items: center;
+            justify-content: center;
+        }
+        .modal-overlay.open { display: flex; }
+
+        .modal-box {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            width: min(720px, 90vw);
+            max-height: 70vh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            box-shadow: 0 24px 64px rgba(0,0,0,0.2);
+        }
+        .modal-header {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 14px 18px;
+            border-bottom: 1px solid var(--border);
+            flex-shrink: 0;
+        }
+        .ai-modal-title { font-size: 13px; font-weight: 600; color: var(--amber); text-transform: uppercase; letter-spacing: 0.07em; }
+        .ai-badge { font-size: 10px; font-weight: 700; background: var(--amber-dim); color: var(--amber); border: 1px solid rgba(154, 103, 0, 0.28); border-radius: 4px; padding: 1px 5px; }
+        .modal-close-btn { margin-left: auto; background: none; border: none; color: var(--text-muted); font-size: 16px; cursor: pointer; padding: 3px 6px; border-radius: 4px; font-family: var(--font-ui); }
+        .modal-close-btn:hover { background: var(--surface-2); color: var(--text); }
+        .modal-body { padding: 16px 18px; overflow-y: auto; flex: 1; }
+        .ai-loading { display: none; align-items: center; gap: 9px; color: var(--text-muted); font-size: 13px; }
+        .ai-loading.active { display: flex; }
+        .ai-error { display: none; color: var(--red); font-size: 13px; background: var(--red-dim); border: 1px solid rgba(207, 34, 46, 0.20); border-radius: var(--radius); padding: 10px 14px; }
+        .ai-error.active { display: block; }
+        .ai-content { display: none; font-size: 13px; font-family: var(--font-mono); line-height: 1.8; color: var(--text); white-space: pre-wrap; }
+        .ai-content.active { display: block; }
+        .spinner-sm { width: 14px; height: 14px; border: 2px solid var(--border); border-top-color: var(--amber); border-radius: 50%; animation: spin 0.8s linear infinite; flex-shrink: 0; }
+
+        @keyframes spin { to { transform: rotate(360deg); } }
+    </style>
 </head>
 <body>
-  <div class="app">
 
-    <!-- Top bar -->
-    <header class="topbar">
-      <div class="brand">
-        <div class="mark">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>
-            <path d="M8 13h2M8 17h2"/><path d="m14 12 3 3-3 3"/>
-          </svg>
-        </div>
-        <div>
-          <h1>DocuDiff</h1>
-          <p class="tag">Identify differences across PDF and Word files instantly</p>
-        </div>
-      </div>
-      <div class="spacer"></div>
-      
-      <!-- Theme Toggle -->
-      <button id="themeToggle" class="btn ghost" title="Toggle Dark Mode" style="margin-right: 16px;">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>
-      </button>
+<header class="header">
+    <div class="header-logo" onclick="location.reload()" title="Restart App">
+        <svg class="header-logo-icon" width="20" height="20" viewBox="0 0 20 20" fill="none"
+             xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+            <rect x="1"  y="2" width="8" height="16" rx="1.5" fill="currentColor" opacity="0.35"/>
+            <rect x="11" y="2" width="8" height="16" rx="1.5" fill="currentColor"/>
+            <line x1="3"  y1="6"  x2="6"  y2="6"  stroke="#CF222E" stroke-width="1.5" stroke-linecap="round"/>
+            <line x1="3"  y1="9"  x2="6"  y2="9"  stroke="#CF222E" stroke-width="1.5" stroke-linecap="round"/>
+            <line x1="3"  y1="12" x2="5"  y2="12" stroke="#CF222E" stroke-width="1.5" stroke-linecap="round"/>
+            <line x1="13" y1="6"  x2="17" y2="6"  stroke="#1A7F37" stroke-width="1.5" stroke-linecap="round"/>
+            <line x1="13" y1="9"  x2="17" y2="9"  stroke="#1A7F37" stroke-width="1.5" stroke-linecap="round"/>
+            <line x1="13" y1="12" x2="17" y2="12" stroke="#1A7F37" stroke-width="1.5" stroke-linecap="round"/>
+            <line x1="13" y1="15" x2="16" y2="15" stroke="#1A7F37" stroke-width="1.5" stroke-linecap="round"/>
+        </svg>
+        DocuDiff
+    </div>
+    <div class="header-sep"></div>
+    <span class="header-sub">Identify differences across PDF and Word files instantly</span>
+</header>
 
-      <!-- Result-only controls -->
-      <div id="resultControls" class="hidden" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
-        <div class="control-group">
-            <label>Zoom (L):</label>
-            <input type="range" id="zoomLeft" min="33" max="300" value="100">
-            <span id="zoomLeftLbl">100%</span>
-        </div>
-        <div class="control-group">
-            <label>Zoom (R):</label>
-            <input type="range" id="zoomRight" min="33" max="300" value="100">
-            <span id="zoomRightLbl">100%</span>
-        </div>
-        <button id="prevBtn" class="btn" title="Previous Change">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg>
-          Prev.
-        </button>
-        <button id="nextBtn" class="btn" title="Next Change">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-          Next
-        </button>
-        <div class="control-group checkbox-group">
-            <label class="custom-checkbox">
-                <input type="checkbox" id="syncScroll" checked>
-                <span class="checkmark"></span>
-                Sync Scroll
-            </label>
-            <label class="custom-checkbox">
-                <input type="checkbox" id="syncZoom" checked>
-                <span class="checkmark"></span>
-                Sync Zoom
-            </label>
-        </div>
-        <button id="newBtn" class="btn ghost" title="Compare new files">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-          New
-        </button>
-      </div>
-    </header>
-
-    <!-- Uploader state -->
-    <section id="uploader" class="uploader">
-      <div class="settings-bar">
-          <label class="custom-checkbox">
-              <input type="checkbox" id="caseInsensitive" checked>
-              <span class="checkmark"></span>
-              Case Insensitive
-          </label>
-          <label class="custom-checkbox">
-              <input type="checkbox" id="ignoreQuotes" checked>
-              <span class="checkmark"></span>
-              Ignore Quotes
-          </label>
-          <label class="custom-checkbox">
-              <input type="checkbox" id="ignoreLigatures" checked>
-              <span class="checkmark"></span>
-              Ignore 'f' ligatures
-          </label>
-          <label class="custom-checkbox">
-              <input type="checkbox" id="darkMode">
-              <span class="checkmark"></span>
-              Dark Mode Annotations
-          </label>
-      </div>
-      <div class="drop-container">
-          <div id="dropOriginal" class="dropzone">
-            <div class="ic">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-            </div>
-            <h2>Original Document</h2>
-            <p>Drag &amp; drop, or <strong>click to browse</strong></p>
-            <input type="file" id="fileOriginal" accept="application/pdf,.pdf,.docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document" />
-            <div class="file-name" id="nameOriginal"></div>
-          </div>
-
-          <div id="dropModified" class="dropzone">
-            <div class="ic">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-            </div>
-            <h2>Modified Document</h2>
-            <p>Drag &amp; drop, or <strong>click to browse</strong></p>
-            <input type="file" id="fileModified" accept="application/pdf,.pdf,.docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document" />
-            <div class="file-name" id="nameModified"></div>
-          </div>
-      </div>
-      
-      <div class="action-bar">
-          <button id="compareBtn" class="btn primary disabled">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21 16-4 4-4-4"/><path d="M17 20V4"/><path d="m3 8 4-4 4 4"/><path d="M7 4v16"/></svg>
-              Compare Documents
-          </button>
-      </div>
-    </section>
-
-    <!-- Loading state -->
-    <div id="loading" class="loading hidden">
-      <div class="spinner"></div>
-      <div>Analyzing Differences & Generating Preview…</div>
+<div class="uploader" id="uploader">
+    <div class="settings-bar">
+        <label class="opt-label"><input type="checkbox" id="opt-case" checked> Case Insensitive</label>
+        <label class="opt-label"><input type="checkbox" id="opt-quotes" checked> Ignore Quotes</label>
+        <label class="opt-label"><input type="checkbox" id="opt-ligatures" checked> Ignore 'f' ligatures</label>
+        <label class="opt-label"><input type="checkbox" id="opt-dark"> Dark Mode Annotations</label>
     </div>
 
-    <!-- Result state -->
-    <section id="result" class="result hidden">
-      <div class="toolbar">
-        <div class="fileinfo">
-          <div class="fic" style="color: #e74c3c;">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
-          </div>
-          <span class="name">Original</span>
+    <div class="drop-container">
+        <div class="dropzone" id="drop-original" onclick="document.getElementById('input-original').click()">
+            <div class="drop-ic">
+                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
+                </svg>
+            </div>
+            <h2>Original Document</h2>
+            <p>Drag & drop, or <strong>click to browse</strong></p>
+            <input type="file" id="input-original" accept=".pdf,.doc,.docx,.rtf,.txt"
+                   onchange="handleFile(this, 'original')" aria-label="Choose original document">
+            <span class="file-name" id="name-original"></span>
         </div>
-        <div id="stats" class="stats"></div>
-        <div class="fileinfo">
-          <div class="fic" style="color: #2ecc71;">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
-          </div>
-          <span class="name">Modified</span>
-        </div>
-      </div>
 
-      <div id="panes" class="panes" data-view="split">
-        <div class="pane pane-raw" id="leftWrapper">
-            <div class="pane-content" id="leftContent"></div>
+        <div class="dropzone" id="drop-modified" onclick="document.getElementById('input-modified').click()">
+            <div class="drop-ic">
+                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
+                </svg>
+            </div>
+            <h2>Modified Document</h2>
+            <p>Drag & drop, or <strong>click to browse</strong></p>
+            <input type="file" id="input-modified" accept=".pdf,.doc,.docx,.rtf,.txt"
+                   onchange="handleFile(this, 'modified')" aria-label="Choose modified document">
+            <span class="file-name" id="name-modified"></span>
         </div>
-        <div id="divider" class="divider"></div>
-        <div class="pane pane-preview" id="rightWrapper">
-            <div class="pane-content" id="rightContent"></div>
-        </div>
-      </div>
-    </section>
+    </div>
 
-    <div id="toast" class="toast"></div>
+    <div class="action-bar">
+        <button class="btn btn-primary" id="btn-compare" onclick="performCompare()" disabled aria-label="Run comparison">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 6px;"><path d="m21 16-4 4-4-4"/><path d="M17 20V4"/><path d="m3 8 4-4 4 4"/><path d="M7 4v16"/></svg>
+            Compare Documents
+        </button>
+    </div>
+    <span class="error-toast" id="error-toast" role="alert" aria-live="polite"></span>
+</div>
+
+<div class="loader-container hidden" id="main-loader">
+    <div class="spinner-large"></div>
+    <div class="loader-text">Analyzing Differences & Generating Preview...</div>
+</div>
+
+<div class="stats-bar" id="stats-bar" role="status" aria-live="polite">
+    <span class="stat-chip chip-del" id="chip-del">
+        <svg width="8" height="8" viewBox="0 0 8 8" aria-hidden="true"><circle cx="4" cy="4" r="3.5" fill="currentColor"/></svg>
+        <span id="del-count">0</span> deleted
+    </span>
+    <span class="stat-chip chip-ins" id="chip-ins">
+        <svg width="8" height="8" viewBox="0 0 8 8" aria-hidden="true"><circle cx="4" cy="4" r="3.5" fill="currentColor"/></svg>
+        <span id="ins-count">0</span> inserted
+    </span>
+
+    <label class="sync-label" id="sync-scroll-label">
+        <input type="checkbox" id="sync-scroll-toggle" checked onchange="handleSyncScrollToggle(this)">
+        <span class="sync-label-text">Sync scroll</span>
+    </label>
+    <label class="sync-label" id="sync-zoom-label">
+        <input type="checkbox" id="sync-zoom-toggle" checked onchange="handleSyncZoomToggle(this)">
+        <span class="sync-label-text">Sync zoom</span>
+    </label>
+
+
+    <button class="btn btn-ai" id="btn-ai-toggle" onclick="toggleAiPanel()" aria-expanded="false">
+        <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <path d="M8 1l1.9 3.8 4.1.6-3 2.9.7 4.1L8 10.4l-3.7 1.9.7-4.1L2 5.4l4.1-.6L8 1z" fill="currentColor"/>
+        </svg>
+        AI Summary
+    </button>
+
+    <div class="nav-group">
+        <span class="nav-counter" id="nav-counter">No changes</span>
+        <button class="btn btn-nav" id="btn-prev" onclick="navigateChange(-1)" disabled>↑ Prev</button>
+        <button class="btn btn-nav" id="btn-next" onclick="navigateChange(1)" disabled>↓ Next</button>
+    </div>
+</div>
+
+
+<div class="viewer" id="viewer">
+    <div class="viewer-column">
+        <div class="panel-header">
+            <div style="display:flex; align-items:center; gap:7px;">
+                <span class="panel-dot"></span>Original
+            </div>
+            <div class="panel-zoom-controls">
+                <input type="range" class="zoom-slider" id="zoom-slider-left" min="40" max="300" value="100" step="10" oninput="handleSliderZoom('left', this.value)">
+                <span class="zoom-label" id="zoom-label-left">100%</span>
+                <button class="btn-zoom-reset-small" onclick="resetPanelZoom('left')" title="Reset Zoom">⌂</button>
+            </div>
+        </div>
+        <div class="doc-panel" id="panel-left" role="region" aria-label="Original document">
+            <div class="doc-pages" id="pages-left"></div>
+        </div>
+    </div>
+    <div class="panel-divider" aria-hidden="true"></div>
+    <div class="viewer-column">
+        <div class="panel-header">
+            <div style="display:flex; align-items:center; gap:7px;">
+                <span class="panel-dot"></span>Modified
+            </div>
+            <div class="panel-zoom-controls">
+                <input type="range" class="zoom-slider" id="zoom-slider-right" min="40" max="300" value="100" step="10" oninput="handleSliderZoom('right', this.value)">
+                <span class="zoom-label" id="zoom-label-right">100%</span>
+                <button class="btn-zoom-reset-small" onclick="resetPanelZoom('right')" title="Reset Zoom">⌂</button>
+            </div>
+        </div>
+        <div class="doc-panel" id="panel-right" role="region" aria-label="Modified document">
+            <div class="doc-pages" id="pages-right"></div>
+        </div>
+    </div>
+</div>
+
+<div class="modal-overlay" id="ai-modal-overlay" aria-modal="true" role="dialog" aria-label="AI Change Summary">
+  <div class="modal-box">
+    <div class="modal-header">
+      <span class="ai-modal-title">AI Change Summary</span>
+      <span class="ai-badge">GROQ</span>
+      <button class="modal-close-btn" onclick="closeAiModal()" aria-label="Close">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="ai-loading" id="ai-loading"><div class="spinner spinner-sm"></div>Generating summary…</div>
+      <div class="ai-error" id="ai-error"></div>
+      <div class="ai-content" id="ai-content"></div>
+    </div>
   </div>
+</div>
 
-  <script src="{{ url_for('static', filename='app.js') }}"></script>
+<script>
+'use strict';
+
+const _files = { original: null, modified: null };
+let _syncMap = [];
+let _changes = [];
+let _changeIdx = -1;
+let _syncLock = false;
+let _comparisonId = null;
+let _aiSummaryFetched = false;
+let _aiPanelOpen = false;
+let _syncScrollEnabled = true;
+let _zoomLevels = { left: 100, right: 100 };
+let _syncZoomEnabled = true;
+
+function setupDropzone(id, inputId, side) {
+    const dropzone = document.getElementById(id);
+    const input = document.getElementById(inputId);
+    dropzone.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        dropzone.classList.add('dragover');
+    });
+    dropzone.addEventListener('dragleave', () => dropzone.classList.remove('dragover'));
+    dropzone.addEventListener('drop', (e) => {
+        e.preventDefault();
+        dropzone.classList.remove('dragover');
+        if (e.dataTransfer.files.length) {
+            input.files = e.dataTransfer.files;
+            handleFile(input, side);
+        }
+    });
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+    setupDropzone('drop-original', 'input-original', 'original');
+    setupDropzone('drop-modified', 'input-modified', 'modified');
+
+    const overlay = document.getElementById('ai-modal-overlay');
+    if(overlay) {
+        overlay.addEventListener('click', function(e) {
+            if (e.target === this) closeAiModal();
+        });
+    }
+
+    ['panel-left', 'panel-right'].forEach(function(id) {
+        const el = document.getElementById(id);
+        const side = id === 'panel-left' ? 'left' : 'right';
+        if(el) {
+            el.addEventListener('wheel', function(e) {
+                if (!e.ctrlKey) return;
+                e.preventDefault();
+                const delta = e.deltaY < 0 ? 10 : -10;
+                applyZoomDelta(side, delta);
+            }, { passive: false });
+        }
+    });
+});
+
+document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape' && _aiPanelOpen) {
+        closeAiModal();
+        document.getElementById('btn-ai-toggle').focus();
+    }
+});
+
+function handleFile(input, side) {
+    const file = input.files[0];
+    if (!file) return;
+
+    _files[side] = file;
+    const nameEl = document.getElementById(side === 'original' ? 'name-original' : 'name-modified');
+    nameEl.textContent = file.name;
+    document.getElementById('btn-compare').disabled = !(_files.original && _files.modified);
+}
+
+
+function setLoading(on, isError=false) {
+    const uploader = document.getElementById('uploader');
+    const loader = document.getElementById('main-loader');
+    const viewer = document.getElementById('viewer');
+
+    if (on) {
+        uploader.classList.add('hidden');
+        loader.classList.remove('hidden');
+        viewer.classList.remove('visible');
+    } else {
+        loader.classList.add('hidden');
+        if(isError) {
+            uploader.classList.remove('hidden');
+        } else {
+            viewer.classList.add('visible');
+        }
+    }
+}
+
+async function performCompare() {
+    if (!_files.original || !_files.modified) return;
+    resetState();
+    setLoading(true);
+    hideError();
+
+    const form = new FormData();
+    form.append('original', _files.original);
+    form.append('modified', _files.modified);
+    form.append('caseInsensitive', document.getElementById('opt-case').checked ? 'true' : 'false');
+    form.append('ignoreQuotes', document.getElementById('opt-quotes').checked ? 'true' : 'false');
+    form.append('ignoreLigatures', document.getElementById('opt-ligatures').checked ? 'true' : 'false');
+    form.append('darkMode', document.getElementById('opt-dark').checked ? 'true' : 'false');
+
+    try {
+        const res  = await fetch('/api/compare', { method: 'POST', body: form });
+        const data = await res.json();
+
+        if (!res.ok || data.error) {
+            showError(data.error || `Server error (${res.status})`);
+            setLoading(false, true);
+            return;
+        }
+
+        renderImages(data.images1, data.images2);
+        updateStats(data.insertions, data.deletions);
+        setupSyncScroll(data.common_words_map || []);
+        setupChangeNav(data.changes || []);
+        setLoading(false);
+
+        if (data.comparison_id) {
+            _comparisonId = data.comparison_id;
+            _aiSummaryFetched = false;
+            setAiState('idle');
+            document.getElementById('btn-ai-toggle').classList.add('visible');
+        }
+    } catch (err) {
+        showError('Network error: ' + err.message);
+        setLoading(false, true);
+    }
+}
+
+function renderImages(images1, images2) {
+    const leftEl  = document.getElementById('pages-left');
+    const rightEl = document.getElementById('pages-right');
+    leftEl.innerHTML  = '';
+    rightEl.innerHTML = '';
+    images1.forEach((b64, i) => {
+        const img = new Image();
+        img.src = 'data:image/png;base64,' + b64;
+        img.draggable = false;
+        leftEl.appendChild(img);
+    });
+    images2.forEach((b64, i) => {
+        const img = new Image();
+        img.src = 'data:image/png;base64,' + b64;
+        img.draggable = false;
+        rightEl.appendChild(img);
+    });
+}
+
+function updateStats(ins, dels) {
+    document.getElementById('del-count').textContent = dels;
+    document.getElementById('ins-count').textContent = ins;
+    document.getElementById('stats-bar').classList.add('visible');
+}
+
+function handleSyncScrollToggle(checkbox) { _syncScrollEnabled = checkbox.checked; }
+function handleSyncZoomToggle(checkbox) { 
+    _syncZoomEnabled = checkbox.checked; 
+    if (_syncZoomEnabled) {
+        setPanelZoom('right', _zoomLevels.left, true);
+    }
+}
+
+function setupSyncScroll(map) {
+    _syncMap = [...map].sort((a, b) => a.left_y - b.left_y);
+    const panelL = document.getElementById('panel-left');
+    const panelR = document.getElementById('panel-right');
+    const newL = panelL.cloneNode(true);
+    const newR = panelR.cloneNode(true);
+    panelL.parentNode.replaceChild(newL, panelL);
+    panelR.parentNode.replaceChild(newR, panelR);
+    newL.addEventListener('scroll', () => syncScroll(newL, newR, 'left'),  { passive: true });
+    newR.addEventListener('scroll', () => syncScroll(newR, newL, 'right'), { passive: true });
+}
+
+function syncScroll(src, tgt, dir) {
+    if (!_syncScrollEnabled) return;
+    if (_syncLock || _syncMap.length === 0) return;
+    _syncLock = true;
+    const st = src.scrollTop;
+    const probe = st + src.clientHeight / 2;
+    let lo = 0, hi = _syncMap.length - 1, best = 0;
+    const srcKey = dir === 'left' ? 'left_y' : 'right_y';
+    const tgtKey = dir === 'left' ? 'right_y' : 'left_y';
+    while (lo <= hi) {
+        const mid = (lo + hi) >> 1;
+        if (Math.abs(_syncMap[mid][srcKey] - probe) < Math.abs(_syncMap[best][srcKey] - probe)) best = mid;
+        if (_syncMap[mid][srcKey] < probe) lo = mid + 1;
+        else hi = mid - 1;
+    }
+    const anchor = _syncMap[best];
+    tgt.scrollTop = Math.max(0, anchor[tgtKey] - (anchor[srcKey] - st));
+    requestAnimationFrame(() => { _syncLock = false; });
+}
+
+function setupChangeNav(changes) {
+    _changes = changes;
+    _changeIdx = changes.length > 0 ? 0 : -1;
+    const prevBtn = document.getElementById('btn-prev');
+    const nextBtn = document.getElementById('btn-next');
+    const counter = document.getElementById('nav-counter');
+    if (changes.length === 0) {
+        counter.textContent = 'No changes';
+        prevBtn.disabled = true;
+        nextBtn.disabled = true;
+        return;
+    }
+    prevBtn.disabled = false;
+    nextBtn.disabled = false;
+    updateNavCounter();
+    scrollToChange(0);
+}
+
+function navigateChange(dir) {
+    if (_changes.length === 0) return;
+    _changeIdx = (_changeIdx + dir + _changes.length) % _changes.length;
+    updateNavCounter();
+    scrollToChange(_changeIdx);
+}
+
+function updateNavCounter() {
+    document.getElementById('nav-counter').textContent = `Change ${_changeIdx + 1} / ${_changes.length}`;
+}
+
+function scrollToChange(idx) {
+    const change = _changes[idx];
+    if (!change) return;
+    const panel = document.getElementById(change.pane === 'left' ? 'panel-left' : 'panel-right');
+    if (!panel) return;
+    panel.scrollTop = Math.max(0, change.y - panel.clientHeight / 2 + 12);
+}
+
+function handleSliderZoom(side, val) {
+    setPanelZoom(side, parseInt(val), false);
+}
+
+function resetPanelZoom(side) {
+    if (_syncZoomEnabled) {
+        setPanelZoom('left', 100, true);
+        setPanelZoom('right', 100, true);
+    } else {
+        setPanelZoom(side, 100, true);
+    }
+}
+
+function applyZoomDelta(side, deltaPercent) {
+    setPanelZoom(side, _zoomLevels[side] + deltaPercent, true);
+}
+
+function setPanelZoom(side, zoomVal, updateSlider=true) {
+    zoomVal = Math.max(40, Math.min(300, zoomVal));
+    _zoomLevels[side] = zoomVal;
+    
+    document.getElementById('zoom-label-' + side).textContent = zoomVal + '%';
+    if (updateSlider) {
+        document.getElementById('zoom-slider-' + side).value = zoomVal;
+    }
+    
+    const panelId = side === 'left' ? 'panel-left' : 'panel-right';
+    const pages = document.querySelector('#' + panelId + ' .doc-pages');
+    if (pages) {
+        const imgs = pages.querySelectorAll('img');
+        imgs.forEach(img => img.style.width = zoomVal + '%');
+    }
+    
+    if (_syncZoomEnabled) {
+        const otherSide = side === 'left' ? 'right' : 'left';
+        if (_zoomLevels[otherSide] !== zoomVal) {
+            _zoomLevels[otherSide] = zoomVal;
+            document.getElementById('zoom-label-' + otherSide).textContent = zoomVal + '%';
+            document.getElementById('zoom-slider-' + otherSide).value = zoomVal;
+            const otherPanelId = otherSide === 'left' ? 'panel-left' : 'panel-right';
+            const otherPages = document.querySelector('#' + otherPanelId + ' .doc-pages');
+            if (otherPages) {
+                const otherImgs = otherPages.querySelectorAll('img');
+                otherImgs.forEach(img => img.style.width = zoomVal + '%');
+            }
+        }
+    }
+}
+
+function openAiModal() {
+    _aiPanelOpen = true;
+    document.getElementById('ai-modal-overlay').classList.add('open');
+    document.getElementById('btn-ai-toggle').setAttribute('aria-expanded','true');
+    
+    if (!_aiSummaryFetched && _comparisonId) {
+        _aiSummaryFetched = true;
+        fetchSummary(_comparisonId);
+    }
+}
+
+function closeAiModal() {
+    _aiPanelOpen = false;
+    document.getElementById('ai-modal-overlay').classList.remove('open');
+    document.getElementById('btn-ai-toggle').setAttribute('aria-expanded','false');
+}
+
+function toggleAiPanel() {
+    if (_aiPanelOpen) closeAiModal(); else openAiModal();
+}
+
+function setAiState(state, text) {
+    const loadingEl = document.getElementById('ai-loading');
+    const errorEl   = document.getElementById('ai-error');
+    const contentEl = document.getElementById('ai-content');
+    loadingEl.classList.toggle('active', state === 'loading');
+    errorEl.classList.toggle('active',   state === 'error');
+    contentEl.classList.toggle('active', state === 'content');
+    if (state === 'error')   errorEl.textContent   = text || '';
+    if (state === 'content') contentEl.textContent = text || '';
+}
+
+async function fetchSummary(comparisonId) {
+    setAiState('loading');
+    try {
+        const res  = await fetch('/api/summarize', {
+            method:  'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body:    JSON.stringify({ comparison_id: comparisonId })
+        });
+        const data = await res.json();
+        if (data.ai_summary_error) {
+            setAiState('error', '⚠ ' + data.ai_summary_error);
+            return;
+        }
+        setAiState('content', data.ai_summary || '(No summary returned.)');
+    } catch (err) {
+        setAiState('error', '⚠ Network error: ' + err.message);
+    }
+}
+
+function showError(msg) {
+    const el = document.getElementById('error-toast');
+    el.textContent = msg;
+    el.classList.add('visible');
+}
+
+function hideError() {
+    document.getElementById('error-toast').classList.remove('visible');
+}
+
+function resetState() {
+    _syncMap = [];
+    _changes = [];
+    _changeIdx = -1;
+    _comparisonId = null;
+    _aiSummaryFetched = false;
+    _aiPanelOpen = false;
+    closeAiModal();
+    document.getElementById('btn-ai-toggle').classList.remove('visible');
+    setAiState('idle');
+
+    ['pages-left', 'pages-right'].forEach(id => document.getElementById(id).innerHTML = '');
+    document.getElementById('stats-bar').classList.remove('visible');
+    resetPanelZoom('left');
+    resetPanelZoom('right');
+}
+</script>
 </body>
 </html>

@@ -3,3 +3,5 @@ PyMuPDF
 klembord
 Pillow
 pywin32
+groq
+python-dotenv
