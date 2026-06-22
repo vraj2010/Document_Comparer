@@ -47,6 +47,12 @@ BASE_DIR     = os.path.dirname(__file__)
 TEMP_PDF_DIR = os.path.join(BASE_DIR, "temp_pdfs")
 os.makedirs(TEMP_PDF_DIR, exist_ok=True)
 
+# ── [NEW] In-memory cache: comparison_id -> converted PDF paths ─────────────
+# Populated by /api/compare, consumed on-demand by /api/summarize when the
+# user actually opens the AI Summary modal (so Groq is never called unless
+# the button is clicked).
+_comparison_cache = {}
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # BACKEND LOGIC
@@ -432,20 +438,16 @@ def compare():
         if ext2 in ['.doc', '.docx', '.rtf', '.txt']:
             mod_path = convert_word_to_pdf_no_markup(mod_path)
 
-        # ── [NEW] LangChain analysis ──────────────────────────────────────────
-        lc_result = {}
-        try:
-            lc_result = run_langchain_analysis(orig_path, mod_path)
-        except Exception as lc_err:
-            lc_result = {
-                "lc_summary":        f"⚠️ LangChain analysis failed: {lc_err}",
-                "lc_original_chars": 0,
-                "lc_modified_chars": 0,
-                "lc_original_pages": 0,
-                "lc_modified_pages": 0,
-            }
+        # ── [NEW] Cache the converted PDF paths under a comparison_id so the
+        # AI Summary modal can run the LangChain pipeline lazily — only if
+        # and when the user clicks the button. Groq is NOT called here. ─────
+        comparison_id = uuid.uuid4().hex
+        _comparison_cache[comparison_id] = {
+            "orig_path": orig_path,
+            "mod_path":  mod_path,
+        }
 
-        # ── Existing fitz pipeline ────────────────────────────────────────────
+        # ── Existing fitz pipeline (unchanged) ──────────────────────────────
         doc1   = fitz.open(orig_path)
         doc2   = fitz.open(mod_path)
         words1 = extract_words_with_styles(doc1, ignore_ligatures)
@@ -489,17 +491,14 @@ def compare():
         doc2.close()
 
         return jsonify({
-            "images1":           images1_b64,
-            "images2":           images2_b64,
-            "common_words_map":  common_words_map,
-            "changes":           changes,
-            "insertions":        ins,
-            "deletions":         dels,
-            "lc_summary":        lc_result.get("lc_summary", ""),
-            "lc_original_pages": lc_result.get("lc_original_pages", 0),
-            "lc_modified_pages": lc_result.get("lc_modified_pages", 0),
-            "lc_original_chars": lc_result.get("lc_original_chars", 0),
-            "lc_modified_chars": lc_result.get("lc_modified_chars", 0),
+            "images1":          images1_b64,
+            "images2":          images2_b64,
+            "common_words_map": common_words_map,
+            "changes":          changes,
+            "insertions":       ins,
+            "deletions":        dels,
+            "comparison_id":    comparison_id,   # [NEW] <-- this is what makes
+                                                  # the AI Summary button appear
         })
 
     except Exception as e:
@@ -508,23 +507,37 @@ def compare():
 
 @app.route('/api/summarize', methods=['POST'])
 def summarize():
+    """
+    [REWRITTEN] Now takes a JSON body { "comparison_id": "..." } — matching
+    what index.html's fetchSummary() actually sends — instead of file
+    uploads. Looks up the cached PDF paths from /api/compare and runs the
+    LangChain/Groq clause-level summary pipeline on demand.
+    """
     try:
-        if 'original' not in request.files or 'modified' not in request.files:
-            return jsonify({"error": "Both files are required"}), 400
+        data = request.get_json(silent=True) or {}
+        comparison_id = data.get('comparison_id')
 
-        orig_file = request.files['original']
-        mod_file  = request.files['modified']
+        if not comparison_id or comparison_id not in _comparison_cache:
+            return jsonify({
+                "ai_summary_error": "Comparison not found or expired — please re-run the comparison."
+            }), 404
 
-        orig_path = os.path.join(TEMP_PDF_DIR, f"sum_orig_{uuid.uuid4().hex}_{orig_file.filename}")
-        mod_path  = os.path.join(TEMP_PDF_DIR, f"sum_mod_{uuid.uuid4().hex}_{mod_file.filename}")
-        orig_file.save(orig_path)
-        mod_file.save(mod_path)
+        paths  = _comparison_cache[comparison_id]
+        result = run_langchain_analysis(paths["orig_path"], paths["mod_path"])
 
-        result = run_langchain_analysis(orig_path, mod_path)
-        return jsonify(result)
+        summary = result.get("lc_summary", "")
+        if not summary:
+            return jsonify({"ai_summary_error": "No summary was generated."}), 500
+
+        return jsonify({
+            "ai_summary":        summary,
+            "clause_diff":       result.get("lc_clause_diff", []),
+            "lc_original_pages": result.get("lc_original_pages", 0),
+            "lc_modified_pages": result.get("lc_modified_pages", 0),
+        })
 
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"ai_summary_error": str(e)}), 500
 
 
 if __name__ == '__main__':
