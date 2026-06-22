@@ -1,8 +1,6 @@
 # -*- coding: UTF-8 -*-
 
 # ─── AI ADDITION 1 of 4 ──────────────────────────────────────────────────────
-# Load .env so GROQ_API_KEY is available before any module reads it.
-# Must be the very first executable lines, before other imports use os.environ.
 from dotenv import load_dotenv
 load_dotenv()
 # ─────────────────────────────────────────────────────────────────────────────
@@ -14,7 +12,7 @@ import re
 import sys
 import uuid
 import base64
-import threading                  # ← needed for the cache lock (AI Addition 2)
+import threading
 from io import BytesIO
 from collections import defaultdict
 
@@ -26,7 +24,6 @@ from flask import Flask, render_template, request, jsonify
 from groq_summary import generate_change_summary, GroqSummarizerError
 # ─────────────────────────────────────────────────────────────────────────────
 
-# We keep pywin32 for local execution if requested
 try:
     import win32com.client
     import pythoncom
@@ -44,10 +41,6 @@ TEMP_PDF_DIR = os.path.join(BASE_DIR, "temp_pdfs")
 os.makedirs(TEMP_PDF_DIR, exist_ok=True)
 
 # ─── AI ADDITION 2 of 4 ──────────────────────────────────────────────────────
-# In-memory diff cache.
-# Stores (words1, words2) tuples between /api/compare and /api/summarize.
-# _cache_get() pops the entry on first read to avoid memory leaks.
-# For a multi-worker production deployment, swap this for Redis.
 _diff_cache: dict = {}
 _diff_cache_lock = threading.Lock()
 
@@ -58,13 +51,10 @@ def _cache_put(comparison_id: str, words1: list, words2: list) -> None:
 
 
 def _cache_get(comparison_id: str):
-    """Returns (words1, words2) and removes the entry, or None if not found."""
     with _diff_cache_lock:
         return _diff_cache.pop(comparison_id, None)
 # ─────────────────────────────────────────────────────────────────────────────
 
-
-# --- Backend Logic ---
 
 def convert_word_to_pdf_no_markup(input_file_path, output_pdf_path=None):
     if not on_windows:
@@ -145,6 +135,21 @@ def extract_words_with_styles(pdf_document, ignore_ligatures=True):
             x0, y0, x1, y1, word_text, block_no, _, _ = word_info[:8]
             word_center_y = (y0 + y1) / 2
 
+            # ── BLANK-SPACE FIX 1 of 2 ───────────────────────────────────────
+            # PyMuPDF occasionally emits whitespace-only tokens or lone
+            # punctuation tokens at line/column boundaries.  These produce
+            # phantom diff highlights for changes that don't exist in content.
+            # Drop them before they enter the word list.
+            _stripped = word_text.strip()
+            if not _stripped:
+                # Completely empty or whitespace-only token — skip.
+                continue
+            if re.fullmatch(r'[.,:;!?\u2026\u2022]+', _stripped):
+                # Lone sentence-end punctuation token (e.g. a bare "." or ",")
+                # that PyMuPDF split off from the preceding word — skip.
+                continue
+            # ─────────────────────────────────────────────────────────────────
+
             added_to_existing_line = False
 
             if block_no not in top_left_in_block:
@@ -195,6 +200,23 @@ def helper_case_quotes(words_data1, words_data2, case_insensitive, ignore_quotes
     if ignore_quotes:
         a_compare = [word.replace("\u2018", "'").replace("\u2019", "'").replace("\u02bc", "'").replace("\u201c", '"').replace("\u201d", '"') for word in a_compare]
         b_compare = [word.replace("\u2018", "'").replace("\u2019", "'").replace("\u02bc", "'").replace("\u201c", '"').replace("\u201d", '"') for word in b_compare]
+
+    # ── BLANK-SPACE FIX 2 of 2 ───────────────────────────────────────────────
+    # Strip leading/trailing whitespace that PyMuPDF sometimes embeds inside
+    # a word token (e.g. " disqualification" vs "disqualification").
+    a_compare = [w.strip() for w in a_compare]
+    b_compare = [w.strip() for w in b_compare]
+
+    # Strip trailing sentence-end punctuation for COMPARISON only.
+    # This makes "disqualification." and "disqualification" compare as equal
+    # when one PDF attaches the period to the word and the other does not.
+    #
+    # What this DOES strip:   full stops, commas, colons, semicolons, !, ?
+    # What this does NOT strip: hyphens ("pre-qualified"), apostrophes
+    #                            ("don't"), numbers ("$10,000"), parens ("(3)")
+    a_compare = [re.sub(r'[.,:;!?]+$', '', w) for w in a_compare]
+    b_compare = [re.sub(r'[.,:;!?]+$', '', w) for w in b_compare]
+    # ─────────────────────────────────────────────────────────────────────────
 
     return a_compare, b_compare
 
@@ -346,8 +368,6 @@ def calculate_absolute_y(word, page_heights, PAGE_PADDING=10):
     return y_start + word["y0"]
 
 
-# --- Flask Routes ---
-
 @app.route('/')
 def index():
     return render_template('index.html')
@@ -372,7 +392,6 @@ def compare():
         orig_file.save(orig_path)
         mod_file.save(mod_path)
 
-        # Word Conversion Check
         ext1 = os.path.splitext(orig_path)[1].lower()
         if ext1 in ['.doc', '.docx', '.rtf', '.txt']:
             orig_path = convert_word_to_pdf_no_markup(orig_path)
@@ -390,10 +409,6 @@ def compare():
         words1, words2 = align_words_with_difflib(words1, words2, case_insensitive, ignore_quotes)
 
         # ─── AI ADDITION 3 of 4 ──────────────────────────────────────────────
-        # Cache the aligned word lists under a unique ID so /api/summarize can
-        # retrieve them without re-running the diff.  This runs instantly
-        # (just a dict insert) and does not affect the response time of this
-        # endpoint at all.
         comparison_id = uuid.uuid4().hex
         _cache_put(comparison_id, words1, words2)
         # ─────────────────────────────────────────────────────────────────────
@@ -432,10 +447,6 @@ def compare():
         doc1.close()
         doc2.close()
 
-        # ─── AI ADDITION 3 of 4 (continued) ──────────────────────────────────
-        # comparison_id is the only new key added to this response.
-        # The frontend uses it to call /api/summarize after images are rendered.
-        # ─────────────────────────────────────────────────────────────────────
         return jsonify({
             "images1":          images1_b64,
             "images2":          images2_b64,
@@ -443,7 +454,7 @@ def compare():
             "changes":          changes,
             "insertions":       ins,
             "deletions":        dels,
-            "comparison_id":    comparison_id,   # ← only new key
+            "comparison_id":    comparison_id,
         })
 
     except Exception as e:
@@ -453,24 +464,12 @@ def compare():
 # ─── AI ADDITION 4 of 4 ──────────────────────────────────────────────────────
 @app.route('/api/summarize', methods=['POST'])
 def summarize():
-    """
-    Called by the frontend after /api/compare has already rendered and
-    displayed the diff images to the user.
-
-    Request body (JSON):
-        { "comparison_id": "<hex string returned by /api/compare>" }
-
-    Response (JSON) — one of:
-        { "ai_summary": "<markdown text>", "ai_summary_error": null  }
-        { "ai_summary": null,              "ai_summary_error": "<msg>" }
-    """
     body = request.get_json(silent=True) or {}
     comparison_id = body.get("comparison_id")
 
     if not comparison_id:
         return jsonify({"error": "comparison_id is required"}), 400
 
-    # Retrieve and remove the cached word lists (one-time use).
     cached = _cache_get(comparison_id)
     if cached is None:
         return jsonify({
