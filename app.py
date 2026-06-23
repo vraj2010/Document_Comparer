@@ -69,7 +69,7 @@ def _cache_get(comparison_id: str):
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-# ── Backend Logic (unchanged from original repo) ──────────────────────────────
+# ── Backend Logic ─────────────────────────────────────────────────────────────
 
 def convert_word_to_pdf_no_markup(input_file_path, output_pdf_path=None):
     if not on_windows:
@@ -88,7 +88,7 @@ def convert_word_to_pdf_no_markup(input_file_path, output_pdf_path=None):
             TEMP_PDF_DIR, f"{base_name}_temp_{os.urandom(4).hex()}.pdf"
         )
 
-    wdFormatPDF        = 17
+    wdFormatPDF          = 17
     wdRevisionsViewFinal = 0
     word_app = None
     doc      = None
@@ -96,7 +96,7 @@ def convert_word_to_pdf_no_markup(input_file_path, output_pdf_path=None):
     try:
         pythoncom.CoInitialize()
         word_app = win32com.client.DispatchEx("Word.Application")
-        word_app.Visible      = False
+        word_app.Visible       = False
         word_app.DisplayAlerts = False
 
         doc = word_app.Documents.Open(str(input_file_path))
@@ -197,10 +197,10 @@ def extract_words_with_styles(pdf_document, ignore_ligatures=True):
             for word_info in line_group['words']:
                 x0, y0, x1, y1, word_text, _, _, _ = word_info[:8]
                 all_words_data.append({
-                    "text":           word_text,
+                    "text":            word_text,
                     "x0": x0, "y0": y0, "x1": x1, "y1": y1,
-                    "page_num":       page_num,
-                    "unique_id":      None,
+                    "page_num":        page_num,
+                    "unique_id":       None,
                     "highlight_color": None,
                 })
 
@@ -233,7 +233,16 @@ def helper_case_quotes(words_data1, words_data2, case_insensitive, ignore_quotes
     return a_compare, b_compare
 
 
-def align_words_with_difflib(words_data1, words_data2, case_insensitive, ignore_quotes):
+def align_words_with_difflib(words_data1, words_data2,
+                              case_insensitive, ignore_quotes,
+                              highlight_scanned=False):
+    """
+    Align two word lists using difflib.
+
+    highlight_scanned=True  → unchanged (equal) words are tagged "yellow"
+                               so that every scanned token gets some annotation.
+    highlight_scanned=False → unchanged words stay None (no highlight).
+    """
     a_compare, b_compare = helper_case_quotes(
         words_data1, words_data2, case_insensitive, ignore_quotes
     )
@@ -249,8 +258,11 @@ def align_words_with_difflib(words_data1, words_data2, case_insensitive, ignore_
                 common_id = f"common-word-{common_word_id_counter}"
                 words_data1[idx1_current + k]["unique_id"]       = common_id
                 words_data2[idx2_current + k]["unique_id"]       = common_id
-                words_data1[idx1_current + k]["highlight_color"] = None
-                words_data2[idx2_current + k]["highlight_color"] = None
+                # ── NEW: optionally mark equal words yellow ───────────────
+                scan_color = "yellow" if highlight_scanned else None
+                words_data1[idx1_current + k]["highlight_color"] = scan_color
+                words_data2[idx2_current + k]["highlight_color"] = scan_color
+                # ─────────────────────────────────────────────────────────
                 common_word_id_counter += 1
             idx1_current += (i2 - i1)
             idx2_current += (j2 - j1)
@@ -278,6 +290,17 @@ def align_words_with_difflib(words_data1, words_data2, case_insensitive, ignore_
             idx2_current += (j2 - j1)
 
     return words_data1, words_data2
+
+
+# ── Per-colour opacity table ──────────────────────────────────────────────────
+# Yellow is kept very subtle so it doesn't overwhelm red / green change marks.
+_COLOR_OPACITY = {
+    "red":    0.30,
+    "green":  0.30,
+    "yellow": 0.18,   # scanned-text highlight — intentionally lighter
+    "blue":   0.25,
+}
+# ─────────────────────────────────────────────────────────────────────────────
 
 
 def apply_annotations_to_pdf_pages(pdf_document, words_data, dark_mode=False):
@@ -312,7 +335,15 @@ def apply_annotations_to_pdf_pages(pdf_document, words_data, dark_mode=False):
             rect = fitz.Rect(word["x0"], word["y0"], word["x1"], word["y1"])
             highlights_by_color[word["highlight_color"]].append(rect)
 
-        for color, rects_to_merge in highlights_by_color.items():
+        # ── Draw yellow (scanned) first so red/green render on top ────────
+        color_order = ["yellow", "blue", "red", "green"]
+        ordered_items = sorted(
+            highlights_by_color.items(),
+            key=lambda kv: color_order.index(kv[0]) if kv[0] in color_order else 99
+        )
+        # ─────────────────────────────────────────────────────────────────
+
+        for color, rects_to_merge in ordered_items:
             if not rects_to_merge:
                 continue
 
@@ -331,13 +362,15 @@ def apply_annotations_to_pdf_pages(pdf_document, words_data, dark_mode=False):
 
             merged_rects.append(current_merged_rect)
 
+            # ── Colour map ────────────────────────────────────────────────
             rgb = (0.0, 0.0, 0.0)
-            if color == "red":
-                rgb = (1.0, 0.0, 0.0)
-            elif color == "green":
-                rgb = (0.0, 1.0, 0.0)
-            elif color == "blue":
-                rgb = (0.0, 0.5, 1.0)
+            if   color == "red":    rgb = (1.0, 0.0,  0.0)
+            elif color == "green":  rgb = (0.0, 1.0,  0.0)
+            elif color == "yellow": rgb = (1.0, 0.95, 0.0)   # warm yellow
+            elif color == "blue":   rgb = (0.0, 0.5,  1.0)
+            # ─────────────────────────────────────────────────────────────
+
+            opacity = _COLOR_OPACITY.get(color, 0.30)
 
             for rect in merged_rects:
                 annot = page.add_highlight_annot(rect)
@@ -347,7 +380,7 @@ def apply_annotations_to_pdf_pages(pdf_document, words_data, dark_mode=False):
                     annot.set_opacity(1)
                 else:
                     annot.set_blendmode("Multiply")
-                    annot.set_opacity(0.3)
+                    annot.set_opacity(opacity)
                 annot.set_info(title="PDFComparer")
                 annot.update()
 
@@ -392,10 +425,13 @@ def compare():
         orig_file = request.files['original']
         mod_file  = request.files['modified']
 
-        case_insensitive = request.form.get('caseInsensitive', 'true')  == 'true'
-        ignore_quotes    = request.form.get('ignoreQuotes',    'true')  == 'true'
-        ignore_ligatures = request.form.get('ignoreLigatures', 'true')  == 'true'
-        dark_mode        = request.form.get('darkMode',        'false') == 'true'
+        case_insensitive  = request.form.get('caseInsensitive',  'true')  == 'true'
+        ignore_quotes     = request.form.get('ignoreQuotes',     'true')  == 'true'
+        ignore_ligatures  = request.form.get('ignoreLigatures',  'true')  == 'true'
+        dark_mode         = request.form.get('darkMode',         'false') == 'true'
+        # ── NEW: highlight every scanned word, not just changed ones ──────
+        highlight_scanned = request.form.get('highlightScanned', 'false') == 'true'
+        # ─────────────────────────────────────────────────────────────────
 
         orig_path = os.path.join(
             TEMP_PDF_DIR, f"orig_{uuid.uuid4().hex}_{orig_file.filename}"
@@ -421,7 +457,8 @@ def compare():
         words2 = extract_words_with_styles(doc2, ignore_ligatures)
 
         words1, words2 = align_words_with_difflib(
-            words1, words2, case_insensitive, ignore_quotes
+            words1, words2, case_insensitive, ignore_quotes,
+            highlight_scanned=highlight_scanned,   # ← NEW
         )
 
         # ── Cache for /api/summarize ──────────────────────────────────────
@@ -458,26 +495,34 @@ def compare():
 
         changes = []
         for w1 in words1:
-            if w1["highlight_color"]:
+            if w1["highlight_color"] and w1["highlight_color"] != "yellow":
                 changes.append({"pane": "left",
                                  "y": calculate_absolute_y(w1, page_heights_1)})
         for w2 in words2:
-            if w2["highlight_color"]:
+            if w2["highlight_color"] and w2["highlight_color"] != "yellow":
                 changes.append({"pane": "right",
                                  "y": calculate_absolute_y(w2, page_heights_2)})
         changes.sort(key=lambda x: x["y"])
+
+        # ── Count scanned (yellow) words for the stats chip ───────────────
+        scanned_words = (
+            sum(1 for w in words1 if w["highlight_color"] == "yellow")
+            if highlight_scanned else 0
+        )
+        # ─────────────────────────────────────────────────────────────────
 
         doc1.close()
         doc2.close()
 
         return jsonify({
-            "images1":          images1_b64,
-            "images2":          images2_b64,
-            "common_words_map": common_words_map,
-            "changes":          changes,
-            "insertions":       ins,
-            "deletions":        dels,
-            "comparison_id":    comparison_id,   # ← new: used by /api/summarize
+            "images1":           images1_b64,
+            "images2":           images2_b64,
+            "common_words_map":  common_words_map,
+            "changes":           changes,
+            "insertions":        ins,
+            "deletions":         dels,
+            "scanned_words":     scanned_words,   # ← NEW
+            "comparison_id":     comparison_id,
         })
 
     except Exception as e:

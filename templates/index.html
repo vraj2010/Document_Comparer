@@ -22,6 +22,8 @@
             --green-dim:    rgba(63, 185, 80, 0.12);
             --amber:        #D29922;
             --amber-dim:    rgba(210, 153, 34, 0.10);
+            --yellow:       #E3C000;
+            --yellow-dim:   rgba(227, 192, 0, 0.10);
             --radius:       6px;
             --font-ui:      'Inter', system-ui, -apple-system, sans-serif;
             --font-mono:    'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
@@ -40,7 +42,6 @@
             display: flex;
             flex-direction: column;
         }
-
 
         /* ── Header ───────────────────────────────────────────── */
         .header {
@@ -135,6 +136,34 @@
             height: 14px;
         }
 
+        /* ── Special style for the "Highlight Scanned" opt ──────── */
+        .opt-label.opt-scan-label {
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 3px 10px;
+            transition: border-color 0.15s, color 0.12s;
+        }
+        .opt-label.opt-scan-label:hover {
+            border-color: var(--yellow);
+            color: var(--yellow);
+        }
+        .opt-label.opt-scan-label:has(input:checked) {
+            border-color: var(--yellow);
+            background: var(--yellow-dim);
+            color: var(--yellow);
+        }
+        .opt-label.opt-scan-label input[type="checkbox"] {
+            accent-color: var(--yellow);
+        }
+        .scan-dot {
+            width: 7px;
+            height: 7px;
+            border-radius: 50%;
+            background: var(--yellow);
+            flex-shrink: 0;
+        }
+        /* ─────────────────────────────────────────────────────── */
+
         .drop-container {
             display: flex;
             gap: 24px;
@@ -228,8 +257,18 @@
             padding: 2px 10px;
             border-radius: 20px;
         }
-        .chip-del { background: var(--red-dim); color: var(--red); border: 1px solid rgba(207, 34, 46, 0.25); }
+        .chip-del { background: var(--red-dim);   color: var(--red);   border: 1px solid rgba(207, 34, 46, 0.25); }
         .chip-ins { background: var(--green-dim); color: var(--green); border: 1px solid rgba(26, 127, 55, 0.25); }
+
+        /* ── NEW: scanned-text chip (shown only when feature is on) ─ */
+        .chip-scan {
+            background: var(--yellow-dim);
+            color: var(--yellow);
+            border: 1px solid rgba(227, 192, 0, 0.25);
+            display: none;
+        }
+        .chip-scan.visible { display: inline-flex; }
+        /* ─────────────────────────────────────────────────────────── */
 
         .sync-label {
             display: flex;
@@ -248,8 +287,6 @@
         .sync-label:hover { border-color: var(--accent); color: var(--text); }
         .sync-label input[type="checkbox"] { accent-color: var(--accent); cursor: pointer; width: 13px; height: 13px; }
         .sync-label:has(input:not(:checked)) { opacity: 0.55; }
-
-
 
         .btn-ai {
             background: var(--amber-dim); color: var(--amber); border: 1px solid rgba(154, 103, 0, 0.30);
@@ -348,7 +385,7 @@
         }
         .btn-zoom-reset-small:hover { color: var(--text); }
         .panel-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
-        #panel-left .panel-dot { background: var(--red); }
+        #panel-left  .panel-dot { background: var(--red); }
         #panel-right .panel-dot { background: var(--green); }
 
         .doc-pages {
@@ -444,6 +481,14 @@
         <label class="opt-label"><input type="checkbox" id="opt-quotes" checked> Ignore Quotes</label>
         <label class="opt-label"><input type="checkbox" id="opt-ligatures" checked> Ignore 'f' ligatures</label>
         <label class="opt-label"><input type="checkbox" id="opt-dark"> Dark Mode Annotations</label>
+
+        <!-- ── NEW: Highlight Scanned Text toggle ─────────────────── -->
+        <label class="opt-label opt-scan-label" title="Adds a soft yellow highlight over every word successfully scanned — lets you verify OCR coverage at a glance">
+            <input type="checkbox" id="opt-scan">
+            <span class="scan-dot"></span>
+            Highlight Scanned Text
+        </label>
+        <!-- ──────────────────────────────────────────────────────────── -->
     </div>
 
     <div class="drop-container">
@@ -498,6 +543,13 @@
         <span id="ins-count">0</span> inserted
     </span>
 
+    <!-- ── NEW: scanned-words chip ────────────────────────────── -->
+    <span class="stat-chip chip-scan" id="chip-scan">
+        <svg width="8" height="8" viewBox="0 0 8 8" aria-hidden="true"><circle cx="4" cy="4" r="3.5" fill="currentColor"/></svg>
+        <span id="scan-count">0</span> scanned
+    </span>
+    <!-- ─────────────────────────────────────────────────────────── -->
+
     <label class="sync-label" id="sync-scroll-label">
         <input type="checkbox" id="sync-scroll-toggle" checked onchange="handleSyncScrollToggle(this)">
         <span class="sync-label-text">Sync scroll</span>
@@ -506,7 +558,6 @@
         <input type="checkbox" id="sync-zoom-toggle" checked onchange="handleSyncZoomToggle(this)">
         <span class="sync-label-text">Sync zoom</span>
     </label>
-
 
     <button class="btn btn-ai" id="btn-ai-toggle" onclick="toggleAiPanel()" aria-expanded="false">
         <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
@@ -521,7 +572,6 @@
         <button class="btn btn-nav" id="btn-next" onclick="navigateChange(1)" disabled>↓ Next</button>
     </div>
 </div>
-
 
 <div class="viewer" id="viewer">
     <div class="viewer-column">
@@ -566,7 +616,7 @@
     </div>
     <div class="modal-body">
       <div class="ai-loading" id="ai-loading"><div class="spinner spinner-sm"></div>Generating summary…</div>
-      <div class="ai-error" id="ai-error"></div>
+      <div class="ai-error"   id="ai-error"></div>
       <div class="ai-content" id="ai-content"></div>
     </div>
   </div>
@@ -576,20 +626,20 @@
 'use strict';
 
 const _files = { original: null, modified: null };
-let _syncMap = [];
-let _changes = [];
+let _syncMap  = [];
+let _changes  = [];
 let _changeIdx = -1;
-let _syncLock = false;
-let _comparisonId = null;
+let _syncLock  = false;
+let _comparisonId     = null;
 let _aiSummaryFetched = false;
-let _aiPanelOpen = false;
+let _aiPanelOpen      = false;
 let _syncScrollEnabled = true;
-let _zoomLevels = { left: 100, right: 100 };
-let _syncZoomEnabled = true;
+let _zoomLevels        = { left: 100, right: 100 };
+let _syncZoomEnabled   = true;
 
 function setupDropzone(id, inputId, side) {
     const dropzone = document.getElementById(id);
-    const input = document.getElementById(inputId);
+    const input    = document.getElementById(inputId);
     dropzone.addEventListener('dragover', (e) => {
         e.preventDefault();
         dropzone.classList.add('dragover');
@@ -610,16 +660,16 @@ document.addEventListener('DOMContentLoaded', function() {
     setupDropzone('drop-modified', 'input-modified', 'modified');
 
     const overlay = document.getElementById('ai-modal-overlay');
-    if(overlay) {
+    if (overlay) {
         overlay.addEventListener('click', function(e) {
             if (e.target === this) closeAiModal();
         });
     }
 
     ['panel-left', 'panel-right'].forEach(function(id) {
-        const el = document.getElementById(id);
+        const el   = document.getElementById(id);
         const side = id === 'panel-left' ? 'left' : 'right';
-        if(el) {
+        if (el) {
             el.addEventListener('wheel', function(e) {
                 if (!e.ctrlKey) return;
                 e.preventDefault();
@@ -640,18 +690,16 @@ document.addEventListener('keydown', function(e) {
 function handleFile(input, side) {
     const file = input.files[0];
     if (!file) return;
-
     _files[side] = file;
     const nameEl = document.getElementById(side === 'original' ? 'name-original' : 'name-modified');
     nameEl.textContent = file.name;
     document.getElementById('btn-compare').disabled = !(_files.original && _files.modified);
 }
 
-
-function setLoading(on, isError=false) {
+function setLoading(on, isError = false) {
     const uploader = document.getElementById('uploader');
-    const loader = document.getElementById('main-loader');
-    const viewer = document.getElementById('viewer');
+    const loader   = document.getElementById('main-loader');
+    const viewer   = document.getElementById('viewer');
 
     if (on) {
         uploader.classList.add('hidden');
@@ -659,7 +707,7 @@ function setLoading(on, isError=false) {
         viewer.classList.remove('visible');
     } else {
         loader.classList.add('hidden');
-        if(isError) {
+        if (isError) {
             uploader.classList.remove('hidden');
         } else {
             viewer.classList.add('visible');
@@ -673,13 +721,18 @@ async function performCompare() {
     setLoading(true);
     hideError();
 
+    const highlightScanned = document.getElementById('opt-scan').checked;
+
     const form = new FormData();
-    form.append('original', _files.original);
-    form.append('modified', _files.modified);
-    form.append('caseInsensitive', document.getElementById('opt-case').checked ? 'true' : 'false');
-    form.append('ignoreQuotes', document.getElementById('opt-quotes').checked ? 'true' : 'false');
-    form.append('ignoreLigatures', document.getElementById('opt-ligatures').checked ? 'true' : 'false');
-    form.append('darkMode', document.getElementById('opt-dark').checked ? 'true' : 'false');
+    form.append('original',         _files.original);
+    form.append('modified',         _files.modified);
+    form.append('caseInsensitive',  document.getElementById('opt-case').checked      ? 'true' : 'false');
+    form.append('ignoreQuotes',     document.getElementById('opt-quotes').checked    ? 'true' : 'false');
+    form.append('ignoreLigatures',  document.getElementById('opt-ligatures').checked ? 'true' : 'false');
+    form.append('darkMode',         document.getElementById('opt-dark').checked      ? 'true' : 'false');
+    // ── NEW ────────────────────────────────────────────────────────────────────
+    form.append('highlightScanned', highlightScanned ? 'true' : 'false');
+    // ──────────────────────────────────────────────────────────────────────────
 
     try {
         const res  = await fetch('/api/compare', { method: 'POST', body: form });
@@ -692,13 +745,13 @@ async function performCompare() {
         }
 
         renderImages(data.images1, data.images2);
-        updateStats(data.insertions, data.deletions);
+        updateStats(data.insertions, data.deletions, data.scanned_words, highlightScanned);
         setupSyncScroll(data.common_words_map || []);
         setupChangeNav(data.changes || []);
         setLoading(false);
 
         if (data.comparison_id) {
-            _comparisonId = data.comparison_id;
+            _comparisonId     = data.comparison_id;
             _aiSummaryFetched = false;
             setAiState('idle');
             document.getElementById('btn-ai-toggle').classList.add('visible');
@@ -714,40 +767,48 @@ function renderImages(images1, images2) {
     const rightEl = document.getElementById('pages-right');
     leftEl.innerHTML  = '';
     rightEl.innerHTML = '';
-    images1.forEach((b64, i) => {
+    images1.forEach((b64) => {
         const img = new Image();
-        img.src = 'data:image/png;base64,' + b64;
+        img.src       = 'data:image/png;base64,' + b64;
         img.draggable = false;
         leftEl.appendChild(img);
     });
-    images2.forEach((b64, i) => {
+    images2.forEach((b64) => {
         const img = new Image();
-        img.src = 'data:image/png;base64,' + b64;
+        img.src       = 'data:image/png;base64,' + b64;
         img.draggable = false;
         rightEl.appendChild(img);
     });
 }
 
-function updateStats(ins, dels) {
+function updateStats(ins, dels, scannedCount, showScan) {
     document.getElementById('del-count').textContent = dels;
     document.getElementById('ins-count').textContent = ins;
     document.getElementById('stats-bar').classList.add('visible');
+
+    // ── scanned-words chip ────────────────────────────────────────────────────
+    const chipScan = document.getElementById('chip-scan');
+    if (showScan && scannedCount != null) {
+        document.getElementById('scan-count').textContent = scannedCount;
+        chipScan.classList.add('visible');
+    } else {
+        chipScan.classList.remove('visible');
+    }
+    // ─────────────────────────────────────────────────────────────────────────
 }
 
 function handleSyncScrollToggle(checkbox) { _syncScrollEnabled = checkbox.checked; }
-function handleSyncZoomToggle(checkbox) { 
-    _syncZoomEnabled = checkbox.checked; 
-    if (_syncZoomEnabled) {
-        setPanelZoom('right', _zoomLevels.left, true);
-    }
+function handleSyncZoomToggle(checkbox) {
+    _syncZoomEnabled = checkbox.checked;
+    if (_syncZoomEnabled) setPanelZoom('right', _zoomLevels.left, true);
 }
 
 function setupSyncScroll(map) {
     _syncMap = [...map].sort((a, b) => a.left_y - b.left_y);
     const panelL = document.getElementById('panel-left');
     const panelR = document.getElementById('panel-right');
-    const newL = panelL.cloneNode(true);
-    const newR = panelR.cloneNode(true);
+    const newL   = panelL.cloneNode(true);
+    const newR   = panelR.cloneNode(true);
     panelL.parentNode.replaceChild(newL, panelL);
     panelR.parentNode.replaceChild(newR, panelR);
     newL.addEventListener('scroll', () => syncScroll(newL, newR, 'left'),  { passive: true });
@@ -758,10 +819,10 @@ function syncScroll(src, tgt, dir) {
     if (!_syncScrollEnabled) return;
     if (_syncLock || _syncMap.length === 0) return;
     _syncLock = true;
-    const st = src.scrollTop;
+    const st    = src.scrollTop;
     const probe = st + src.clientHeight / 2;
     let lo = 0, hi = _syncMap.length - 1, best = 0;
-    const srcKey = dir === 'left' ? 'left_y' : 'right_y';
+    const srcKey = dir === 'left' ? 'left_y'  : 'right_y';
     const tgtKey = dir === 'left' ? 'right_y' : 'left_y';
     while (lo <= hi) {
         const mid = (lo + hi) >> 1;
@@ -769,17 +830,17 @@ function syncScroll(src, tgt, dir) {
         if (_syncMap[mid][srcKey] < probe) lo = mid + 1;
         else hi = mid - 1;
     }
-    const anchor = _syncMap[best];
+    const anchor      = _syncMap[best];
     tgt.scrollTop = Math.max(0, anchor[tgtKey] - (anchor[srcKey] - st));
     requestAnimationFrame(() => { _syncLock = false; });
 }
 
 function setupChangeNav(changes) {
-    _changes = changes;
+    _changes   = changes;
     _changeIdx = changes.length > 0 ? 0 : -1;
-    const prevBtn = document.getElementById('btn-prev');
-    const nextBtn = document.getElementById('btn-next');
-    const counter = document.getElementById('nav-counter');
+    const prevBtn  = document.getElementById('btn-prev');
+    const nextBtn  = document.getElementById('btn-next');
+    const counter  = document.getElementById('nav-counter');
     if (changes.length === 0) {
         counter.textContent = 'No changes';
         prevBtn.disabled = true;
@@ -800,7 +861,8 @@ function navigateChange(dir) {
 }
 
 function updateNavCounter() {
-    document.getElementById('nav-counter').textContent = `Change ${_changeIdx + 1} / ${_changes.length}`;
+    document.getElementById('nav-counter').textContent =
+        `Change ${_changeIdx + 1} / ${_changes.length}`;
 }
 
 function scrollToChange(idx) {
@@ -811,13 +873,11 @@ function scrollToChange(idx) {
     panel.scrollTop = Math.max(0, change.y - panel.clientHeight / 2 + 12);
 }
 
-function handleSliderZoom(side, val) {
-    setPanelZoom(side, parseInt(val), false);
-}
+function handleSliderZoom(side, val) { setPanelZoom(side, parseInt(val), false); }
 
 function resetPanelZoom(side) {
     if (_syncZoomEnabled) {
-        setPanelZoom('left', 100, true);
+        setPanelZoom('left',  100, true);
         setPanelZoom('right', 100, true);
     } else {
         setPanelZoom(side, 100, true);
@@ -828,34 +888,28 @@ function applyZoomDelta(side, deltaPercent) {
     setPanelZoom(side, _zoomLevels[side] + deltaPercent, true);
 }
 
-function setPanelZoom(side, zoomVal, updateSlider=true) {
+function setPanelZoom(side, zoomVal, updateSlider = true) {
     zoomVal = Math.max(40, Math.min(300, zoomVal));
     _zoomLevels[side] = zoomVal;
-    
-    document.getElementById('zoom-label-' + side).textContent = zoomVal + '%';
-    if (updateSlider) {
+
+    document.getElementById('zoom-label-'  + side).textContent = zoomVal + '%';
+    if (updateSlider)
         document.getElementById('zoom-slider-' + side).value = zoomVal;
-    }
-    
+
     const panelId = side === 'left' ? 'panel-left' : 'panel-right';
-    const pages = document.querySelector('#' + panelId + ' .doc-pages');
-    if (pages) {
-        const imgs = pages.querySelectorAll('img');
-        imgs.forEach(img => img.style.width = zoomVal + '%');
-    }
-    
+    const pages   = document.querySelector('#' + panelId + ' .doc-pages');
+    if (pages) pages.querySelectorAll('img').forEach(img => img.style.width = zoomVal + '%');
+
     if (_syncZoomEnabled) {
         const otherSide = side === 'left' ? 'right' : 'left';
         if (_zoomLevels[otherSide] !== zoomVal) {
             _zoomLevels[otherSide] = zoomVal;
-            document.getElementById('zoom-label-' + otherSide).textContent = zoomVal + '%';
-            document.getElementById('zoom-slider-' + otherSide).value = zoomVal;
-            const otherPanelId = otherSide === 'left' ? 'panel-left' : 'panel-right';
-            const otherPages = document.querySelector('#' + otherPanelId + ' .doc-pages');
-            if (otherPages) {
-                const otherImgs = otherPages.querySelectorAll('img');
-                otherImgs.forEach(img => img.style.width = zoomVal + '%');
-            }
+            document.getElementById('zoom-label-'  + otherSide).textContent = zoomVal + '%';
+            document.getElementById('zoom-slider-' + otherSide).value        = zoomVal;
+            const otherPanel = document.querySelector(
+                '#' + (otherSide === 'left' ? 'panel-left' : 'panel-right') + ' .doc-pages'
+            );
+            if (otherPanel) otherPanel.querySelectorAll('img').forEach(img => img.style.width = zoomVal + '%');
         }
     }
 }
@@ -863,8 +917,7 @@ function setPanelZoom(side, zoomVal, updateSlider=true) {
 function openAiModal() {
     _aiPanelOpen = true;
     document.getElementById('ai-modal-overlay').classList.add('open');
-    document.getElementById('btn-ai-toggle').setAttribute('aria-expanded','true');
-    
+    document.getElementById('btn-ai-toggle').setAttribute('aria-expanded', 'true');
     if (!_aiSummaryFetched && _comparisonId) {
         _aiSummaryFetched = true;
         fetchSummary(_comparisonId);
@@ -874,12 +927,10 @@ function openAiModal() {
 function closeAiModal() {
     _aiPanelOpen = false;
     document.getElementById('ai-modal-overlay').classList.remove('open');
-    document.getElementById('btn-ai-toggle').setAttribute('aria-expanded','false');
+    document.getElementById('btn-ai-toggle').setAttribute('aria-expanded', 'false');
 }
 
-function toggleAiPanel() {
-    if (_aiPanelOpen) closeAiModal(); else openAiModal();
-}
+function toggleAiPanel() { if (_aiPanelOpen) closeAiModal(); else openAiModal(); }
 
 function setAiState(state, text) {
     const loadingEl = document.getElementById('ai-loading');
@@ -917,23 +968,21 @@ function showError(msg) {
     el.classList.add('visible');
 }
 
-function hideError() {
-    document.getElementById('error-toast').classList.remove('visible');
-}
+function hideError() { document.getElementById('error-toast').classList.remove('visible'); }
 
 function resetState() {
     _syncMap = [];
     _changes = [];
-    _changeIdx = -1;
-    _comparisonId = null;
+    _changeIdx        = -1;
+    _comparisonId     = null;
     _aiSummaryFetched = false;
-    _aiPanelOpen = false;
+    _aiPanelOpen      = false;
     closeAiModal();
     document.getElementById('btn-ai-toggle').classList.remove('visible');
     setAiState('idle');
-
     ['pages-left', 'pages-right'].forEach(id => document.getElementById(id).innerHTML = '');
     document.getElementById('stats-bar').classList.remove('visible');
+    document.getElementById('chip-scan').classList.remove('visible');
     resetPanelZoom('left');
     resetPanelZoom('right');
 }
