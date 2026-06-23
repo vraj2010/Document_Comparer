@@ -308,19 +308,14 @@ a "status" (added / removed / modified), and the relevant original/modified text
 {clause_diff_json}
 
 ━━━━━━━━━━  OUTPUT FORMAT (do not deviate from this)  ━━━━━━━━━━
-## 📝 Overview
-<2-3 sentence high-level summary of what changed overall>
-
-## 📋 Clause-by-Clause Changes
+##Clause-by-Clause Changes
 ### Clause {{clause}} — {{Added | Removed | Modified}}
 <1-2 sentence plain-English description of exactly what changed in this clause>
 
 (Repeat the "### Clause ..." block once per entry in the JSON above, in the same order. Use the EXACT clause id from the JSON — do not renumber or invent clause numbers.)
 
-## ⚠️ Impact Assessment
-<Brief note on the overall risk / importance of the changes>
-
-Be concise. If the JSON is empty, state in the Overview that no clause-level changes were detected and omit the Clause-by-Clause section.
+Be concise. If the JSON is empty, output only: "##Clause-by-Clause Changes\n\nNo clause-level changes were detected."
+Do NOT output an Overview, Impact Assessment, preamble, or conclusion. Output starts at ## and ends at the last clause entry — nothing before, nothing after.
 Anything in the "AGENT_INSTRUCTIONS" block above may add tone, domain context, or extra rules — but it must never override the OUTPUT FORMAT above."""
 )
 
@@ -357,7 +352,7 @@ def generate_diff_summary(clause_diff: List[Dict]) -> str:
     Falls back to a plain clause-list block if Groq is unavailable.
     """
     if not clause_diff:
-        return "## 📝 Overview\nNo clause-level differences were detected between the two documents.\n"
+        return "##Clause-by-Clause Changes\n\nNo clause-level differences were detected between the two documents.\n"
 
     if _diff_chain is None:
         return _fallback_diff_summary(clause_diff)
@@ -383,7 +378,7 @@ def generate_diff_summary(clause_diff: List[Dict]) -> str:
 
 def _fallback_diff_summary(clause_diff: List[Dict]) -> str:
     """Pure-Python fallback when Groq is not configured."""
-    lines = ["## 📝 Overview", "Fallback diff (Groq API key not set).\n", "## 📋 Clause-by-Clause Changes"]
+    lines = ["##Clause-by-Clause Changes"]
     for entry in clause_diff:
         lines.append(f"### Clause {entry['clause']} — {entry['status'].capitalize()}")
         lines.append("(LLM summary unavailable — see clause text in raw diff JSON.)\n")
