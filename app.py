@@ -131,12 +131,128 @@ def convert_word_to_pdf_no_markup(input_file_path, output_pdf_path=None):
         pythoncom.CoUninitialize()
 
 
-def extract_words_with_styles(pdf_document, ignore_ligatures=True):
+# ── Header / Footer detection (hybrid: repetition + margin fallback) ─────────
+def detect_header_footer_bounds(pdf_document,
+                                 top_zone_frac=0.15,
+                                 bottom_zone_frac=0.15,
+                                 repeat_ratio_threshold=0.6,
+                                 fallback_top_frac=0.08,
+                                 fallback_bottom_frac=0.08):
+    """
+    Detects per-page header/footer y-bounds using a hybrid strategy:
+
+      1. Inspect text blocks that sit inside the top/bottom `*_zone_frac`
+         band of each page.
+      2. Normalize each block's text (digits -> '#', whitespace collapsed)
+         so page numbers / dates don't break matching across pages.
+      3. If a normalized text recurs on >= repeat_ratio_threshold of pages
+         (min 2 pages), treat the furthest extent reached by any matching
+         occurrence as the real header/footer boundary. Stored as a
+         *fraction* of page height so it still applies sanely if page
+         sizes vary within the document.
+      4. If nothing repeats enough (single-page doc, or there genuinely is
+         no header/footer), fall back to a fixed margin band
+         (`fallback_top_frac` / `fallback_bottom_frac`).
+
+    Returns:
+        dict {page_num: (header_max_y, footer_min_y)}
+        Any word whose y1 <= header_max_y, or y0 >= footer_min_y, on that
+        page should be treated as header/footer content.
+    """
+    page_count = pdf_document.page_count
+
+    header_candidates = defaultdict(list)  # norm_text -> [(page_num, y1, page_h), ...]
+    footer_candidates = defaultdict(list)
+
+    def normalize(text):
+        text = re.sub(r'\d+', '#', text)
+        text = re.sub(r'\s+', ' ', text).strip().lower()
+        return text
+
+    page_heights = []
+
+    for page_num in range(page_count):
+        page = pdf_document.load_page(page_num)
+        page.remove_rotation()
+        page_height = page.rect.height
+        page_heights.append(page_height)
+
+        top_limit    = page_height * top_zone_frac
+        bottom_limit = page_height * (1 - bottom_zone_frac)
+
+        blocks = page.get_text("dict").get("blocks", [])
+        for block in blocks:
+            if block.get("type") != 0:   # text blocks only (skip images, etc.)
+                continue
+            bbox = block.get("bbox")
+            if not bbox:
+                continue
+            x0, y0, x1, y1 = bbox
+
+            block_text = "".join(
+                span.get("text", "")
+                for line in block.get("lines", [])
+                for span in line.get("spans", [])
+            ).strip()
+            if not block_text:
+                continue
+
+            norm = normalize(block_text)
+            if not norm:
+                continue
+
+            if y1 <= top_limit:
+                header_candidates[norm].append((page_num, y1, page_height))
+            elif y0 >= bottom_limit:
+                footer_candidates[norm].append((page_num, y0, page_height))
+
+    min_pages_required = max(2, int(round(page_count * repeat_ratio_threshold)))
+
+    def resolve_bound_fraction(candidates, want_max):
+        """
+        Picks the candidate normalized-text group with the most page hits
+        (provided it clears min_pages_required) and returns the extreme
+        y-fraction (max for header extents, min for footer extents) across
+        its occurrences. Returns None if nothing clears the threshold.
+        """
+        best_norm, best_hits = None, []
+        for norm, hits in candidates.items():
+            if len(hits) >= min_pages_required and len(hits) > len(best_hits):
+                best_norm, best_hits = norm, hits
+
+        if not best_hits:
+            return None
+
+        fracs = [(y / h) for (_, y, h) in best_hits]
+        return max(fracs) if want_max else min(fracs)
+
+    header_frac = resolve_bound_fraction(header_candidates, want_max=True)
+    footer_frac = resolve_bound_fraction(footer_candidates, want_max=False)
+
+    bounds = {}
+    for page_num in range(page_count):
+        page_height = page_heights[page_num]
+        h_frac = header_frac if header_frac is not None else fallback_top_frac
+        f_frac = footer_frac if footer_frac is not None else (1 - fallback_bottom_frac)
+        bounds[page_num] = (page_height * h_frac, page_height * f_frac)
+
+    return bounds
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def extract_words_with_styles(pdf_document, ignore_ligatures=True,
+                               header_footer_bounds=None):
     all_words_data = []
     LINE_TOLERANCE_Y = 3
 
     for page_num, page in enumerate(pdf_document):
         page.remove_rotation()
+
+        # ── header/footer exclusion bounds for this page ───────────────────
+        header_max_y, footer_min_y = (None, None)
+        if header_footer_bounds is not None:
+            header_max_y, footer_min_y = header_footer_bounds.get(page_num, (None, None))
+        # ─────────────────────────────────────────────────────────────────
 
         if ignore_ligatures:
             words_data = page.get_text("words", flags=0)
@@ -155,6 +271,13 @@ def extract_words_with_styles(pdf_document, ignore_ligatures=True):
             if not _stripped:
                 continue
             if re.fullmatch(r'[.,:;!?\u2026\u2022]+', _stripped):
+                continue
+            # ─────────────────────────────────────────────────────────────
+
+            # ── header/footer exclusion ────────────────────────────────────
+            if header_max_y is not None and y1 <= header_max_y:
+                continue
+            if footer_min_y is not None and y0 >= footer_min_y:
                 continue
             # ─────────────────────────────────────────────────────────────
 
@@ -425,12 +548,14 @@ def compare():
         orig_file = request.files['original']
         mod_file  = request.files['modified']
 
-        case_insensitive  = request.form.get('caseInsensitive',  'true')  == 'true'
-        ignore_quotes     = request.form.get('ignoreQuotes',     'true')  == 'true'
-        ignore_ligatures  = request.form.get('ignoreLigatures',  'true')  == 'true'
-        dark_mode         = request.form.get('darkMode',         'false') == 'true'
+        case_insensitive   = request.form.get('caseInsensitive',   'true')  == 'true'
+        ignore_quotes      = request.form.get('ignoreQuotes',      'true')  == 'true'
+        ignore_ligatures   = request.form.get('ignoreLigatures',   'true')  == 'true'
+        dark_mode          = request.form.get('darkMode',          'false') == 'true'
         # ── NEW: highlight every scanned word, not just changed ones ──────
-        highlight_scanned = request.form.get('highlightScanned', 'false') == 'true'
+        highlight_scanned  = request.form.get('highlightScanned',  'false') == 'true'
+        # ── NEW: exclude header/footer content from detection entirely ────
+        ignore_header_footer = request.form.get('ignoreHeaderFooter', 'true') == 'true'
         # ─────────────────────────────────────────────────────────────────
 
         orig_path = os.path.join(
@@ -453,12 +578,18 @@ def compare():
         doc1 = fitz.open(orig_path)
         doc2 = fitz.open(mod_path)
 
-        words1 = extract_words_with_styles(doc1, ignore_ligatures)
-        words2 = extract_words_with_styles(doc2, ignore_ligatures)
+        # ── NEW: detect header/footer bounds per document (independently,
+        #    since the two files may use different templates/margins) ──────
+        bounds1 = detect_header_footer_bounds(doc1) if ignore_header_footer else None
+        bounds2 = detect_header_footer_bounds(doc2) if ignore_header_footer else None
+        # ─────────────────────────────────────────────────────────────────
+
+        words1 = extract_words_with_styles(doc1, ignore_ligatures, header_footer_bounds=bounds1)
+        words2 = extract_words_with_styles(doc2, ignore_ligatures, header_footer_bounds=bounds2)
 
         words1, words2 = align_words_with_difflib(
             words1, words2, case_insensitive, ignore_quotes,
-            highlight_scanned=highlight_scanned,   # ← NEW
+            highlight_scanned=highlight_scanned,
         )
 
         # ── Cache for /api/summarize ──────────────────────────────────────
@@ -521,7 +652,7 @@ def compare():
             "changes":           changes,
             "insertions":        ins,
             "deletions":         dels,
-            "scanned_words":     scanned_words,   # ← NEW
+            "scanned_words":     scanned_words,
             "comparison_id":     comparison_id,
         })
 

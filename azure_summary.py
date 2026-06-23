@@ -71,6 +71,86 @@ BRIDGE_GAP_WORDS = 2
 MAX_SPANS        = 400
 
 
+# ── Clause marker detection (mirrors langchain_pipeline.py's patterns) ───────
+# These are the SAME marker patterns used by langchain_pipeline.py's
+# extract_clause_segments(). Duplicated here (not imported) so this
+# Azure-only module doesn't pull in langchain_groq / document loaders it
+# has no other use for. Keep in sync manually if those patterns change.
+#
+# Multi-level numeric clause markers at the START of a word: "2.1", "2.1.1", "5.13"
+_NUMERIC_RE = re.compile(r'^(\d{1,3}(?:\.\d{1,3}){1,5})\b')
+
+# Bracketed sub-item markers at the START of a word: "(a)", "(k)", "(vii)"
+_BRACKET_RE = re.compile(r'^\(([a-zA-Z]{1,6})\)')
+
+# Matches LINE_TOLERANCE_Y used in app.py's extract_words_with_styles, so
+# "same line" is detected consistently between the two modules.
+_CLAUSE_LINE_TOLERANCE_Y = 3
+
+
+def _detect_clause_marker(word_text):
+    m = _NUMERIC_RE.match(word_text)
+    if m:
+        return ('numeric', m.group(1))
+    m = _BRACKET_RE.match(word_text)
+    if m:
+        return ('bracket', m.group(1))
+    return None
+
+
+def tag_words_with_clause(words_data):
+    """
+    Walks words_data (already in page/reading order, exactly as produced by
+    app.py's extract_words_with_styles) and tags every word dict IN PLACE
+    with a "clause" key — the clause identifier it belongs to.
+
+    Uses the same numeric ("2.1.3") / bracket ("(k)") marker convention as
+    langchain_pipeline.py's extract_clause_segments(), but detects markers
+    at the WORD level (this module only has word dicts, not clean page
+    text): a word counts as "start of a new line" when its vertical center
+    differs from the immediately preceding word's by more than
+    _CLAUSE_LINE_TOLERANCE_Y, or it's the first word on a new page. If that
+    line-starting word matches a clause marker, the running "current
+    clause" updates (numeric markers reset the base clause; bracket
+    markers nest under the last numeric clause seen, e.g. "2.1.5(k)").
+    Every word — including non-marker words — inherits whatever clause was
+    last established. Text before the first marker is tagged "Preamble",
+    matching langchain_pipeline.py's convention.
+
+    Mutates words_data in place and also returns it for convenience.
+    """
+    current_numeric = None
+    current_clause  = "Preamble"
+    prev_y_center    = None
+    prev_page        = None
+
+    for w in words_data:
+        y_center = (w["y0"] + w["y1"]) / 2
+        is_line_start = (
+            prev_page is None
+            or w["page_num"] != prev_page
+            or prev_y_center is None
+            or abs(y_center - prev_y_center) > _CLAUSE_LINE_TOLERANCE_Y
+        )
+
+        if is_line_start:
+            marker = _detect_clause_marker(w["text"].strip())
+            if marker:
+                kind, val = marker
+                if kind == "numeric":
+                    current_numeric = val
+                    current_clause  = val
+                else:
+                    current_clause = f"{current_numeric}({val})" if current_numeric else f"({val})"
+
+        w["clause"] = current_clause
+        prev_y_center = y_center
+        prev_page     = w["page_num"]
+
+    return words_data
+# ─────────────────────────────────────────────────────────────────────────────
+
+
 # ── Custom exception ──────────────────────────────────────────────────────────
 
 class AzureSummarizerError(Exception):
@@ -83,6 +163,7 @@ class AzureSummarizerError(Exception):
 class ChangeSpan:
     kind: str                         # "added" | "removed"
     page: int                         # 1-indexed for humans
+    clause: str = "Preamble"          # clause id this span belongs to (see tag_words_with_clause)
     words: list = field(default_factory=list)
     context_before: str = ""
     context_after:  str = ""
@@ -115,6 +196,10 @@ def extract_change_spans(words_data, bridge_gap=BRIDGE_GAP_WORDS):
     Groups consecutive red/green highlighted words into ChangeSpan objects.
     Same-colour runs separated by <= bridge_gap unchanged words are folded
     into one span so a lightly-edited sentence appears as a single change.
+
+    Assumes words_data has already been passed through
+    tag_words_with_clause() (done in build_diff_payload), so each word
+    dict carries a "clause" key.
     """
     sorted_words  = sorted(words_data, key=_sort_key)
     pos_by_id     = {id(w): i for i, w in enumerate(sorted_words)}
@@ -167,6 +252,7 @@ def extract_change_spans(words_data, bridge_gap=BRIDGE_GAP_WORDS):
         spans.append(ChangeSpan(
             kind           = color_to_kind[run["color"]],
             page           = run["words"][0]["page_num"] + 1,
+            clause         = run["words"][0].get("clause", "Preamble"),
             words          = run["words"],
             context_before = _context(sorted_words, fi, -1, CONTEXT_WORDS),
             context_after  = _context(sorted_words, li,  1, CONTEXT_WORDS),
@@ -203,6 +289,13 @@ def build_diff_payload(words1, words2,
     Builds the JSON payload that will be sent to the LLM.
     Called with the words1/words2 already tagged by align_words_with_difflib.
     """
+    # ── NEW: tag every word with the clause it belongs to, BEFORE spans
+    #    are built, so each ChangeSpan inherits a real clause id instead
+    #    of only ever having a page number. ──────────────────────────────
+    tag_words_with_clause(words1)
+    tag_words_with_clause(words2)
+    # ─────────────────────────────────────────────────────────────────────
+
     removed = [s for s in extract_change_spans(words1) if s.kind == "removed"]
     added   = [s for s in extract_change_spans(words2) if s.kind == "added"]
 
@@ -230,6 +323,7 @@ def build_diff_payload(words1, words2,
     for r, a in replacements:
         changes.append({
             "type": "replaced",
+            "clause": r.clause or a.clause,
             "page": r.page,
             "old_text": r.text,
             "new_text": a.text,
@@ -239,6 +333,7 @@ def build_diff_payload(words1, words2,
     for r in leftover_rem:
         changes.append({
             "type": "removed",
+            "clause": r.clause,
             "page": r.page,
             "text": r.text,
             "context_before": r.context_before,
@@ -247,6 +342,7 @@ def build_diff_payload(words1, words2,
     for a in leftover_add:
         changes.append({
             "type": "added",
+            "clause": a.clause,
             "page": a.page,
             "text": a.text,
             "context_before": a.context_before,
