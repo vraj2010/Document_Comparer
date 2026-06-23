@@ -1,11 +1,11 @@
-# ── Original dependencies (UNCHANGED) ────────────────────────────────────────
 Flask
 PyMuPDF
-klembord
 Pillow
 pywin32
+python-dotenv
 langchain
 langchain-openai
 langchain-core
-python-dotenv
+langchain-community
+langchain-text-splitters
 openai

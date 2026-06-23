@@ -1,14 +1,11 @@
 # -*- coding: UTF-8 -*-
 
-# ── Load .env FIRST — before anything reads os.environ ───────────────────────
 from dotenv import load_dotenv
 load_dotenv()
-# ─────────────────────────────────────────────────────────────────────────────
 
 import difflib
 import os
 import re
-import sys
 import uuid
 import base64
 import threading
@@ -19,9 +16,7 @@ import fitz  # PyMuPDF
 from PIL import Image
 from flask import Flask, render_template, request, jsonify
 
-# ── Azure AI summary module ───────────────────────────────────────────────────
 from azure_summary import generate_change_summary, AzureSummarizerError
-# ─────────────────────────────────────────────────────────────────────────────
 
 try:
     import win32com.client
@@ -39,9 +34,8 @@ BASE_DIR     = os.path.dirname(__file__)
 TEMP_PDF_DIR = os.path.join(BASE_DIR, "temp_pdfs")
 os.makedirs(TEMP_PDF_DIR, exist_ok=True)
 
-# ── In-memory diff cache ──────────────────────────────────────────────────────
-# Stores aligned word lists between /api/compare and /api/summarize.
-# Thread-safe via a lock. For multi-worker production: swap for Redis.
+# In-memory diff cache — stores aligned word lists between /api/compare and /api/summarize.
+# Thread-safe via a lock. For multi-worker production, swap for Redis.
 _diff_cache      : dict = {}
 _diff_cache_lock = threading.Lock()
 
@@ -66,10 +60,7 @@ def _cache_get(comparison_id: str):
     """Returns cached dict and removes the entry (one-time use)."""
     with _diff_cache_lock:
         return _diff_cache.pop(comparison_id, None)
-# ─────────────────────────────────────────────────────────────────────────────
 
-
-# ── Backend Logic ─────────────────────────────────────────────────────────────
 
 def convert_word_to_pdf_no_markup(input_file_path, output_pdf_path=None):
     if not on_windows:
@@ -91,7 +82,6 @@ def convert_word_to_pdf_no_markup(input_file_path, output_pdf_path=None):
     wdFormatPDF          = 17
     wdRevisionsViewFinal = 0
     word_app = None
-    doc      = None
 
     try:
         pythoncom.CoInitialize()
@@ -131,7 +121,6 @@ def convert_word_to_pdf_no_markup(input_file_path, output_pdf_path=None):
         pythoncom.CoUninitialize()
 
 
-# ── Header / Footer detection (hybrid: repetition + margin fallback) ─────────
 def detect_header_footer_bounds(pdf_document,
                                  top_zone_frac=0.15,
                                  bottom_zone_frac=0.15,
@@ -141,27 +130,23 @@ def detect_header_footer_bounds(pdf_document,
     """
     Detects per-page header/footer y-bounds using a hybrid strategy:
 
-      1. Inspect text blocks that sit inside the top/bottom `*_zone_frac`
-         band of each page.
-      2. Normalize each block's text (digits -> '#', whitespace collapsed)
-         so page numbers / dates don't break matching across pages.
+      1. Inspect text blocks inside the top/bottom *_zone_frac band of each page.
+      2. Normalize block text (digits -> '#', whitespace collapsed) so page
+         numbers and dates don't break matching across pages.
       3. If a normalized text recurs on >= repeat_ratio_threshold of pages
-         (min 2 pages), treat the furthest extent reached by any matching
-         occurrence as the real header/footer boundary. Stored as a
-         *fraction* of page height so it still applies sanely if page
-         sizes vary within the document.
-      4. If nothing repeats enough (single-page doc, or there genuinely is
-         no header/footer), fall back to a fixed margin band
-         (`fallback_top_frac` / `fallback_bottom_frac`).
+         (min 2), treat the furthest extent of any matching occurrence as the
+         real header/footer boundary, stored as a fraction of page height so
+         it applies sanely when page sizes vary within the document.
+      4. Fall back to fixed margin bands when nothing repeats enough
+         (single-page docs, or documents with no repeating header/footer).
 
     Returns:
         dict {page_num: (header_max_y, footer_min_y)}
-        Any word whose y1 <= header_max_y, or y0 >= footer_min_y, on that
-        page should be treated as header/footer content.
+        Words whose y1 <= header_max_y or y0 >= footer_min_y are header/footer.
     """
     page_count = pdf_document.page_count
 
-    header_candidates = defaultdict(list)  # norm_text -> [(page_num, y1, page_h), ...]
+    header_candidates = defaultdict(list)
     footer_candidates = defaultdict(list)
 
     def normalize(text):
@@ -182,7 +167,7 @@ def detect_header_footer_bounds(pdf_document,
 
         blocks = page.get_text("dict").get("blocks", [])
         for block in blocks:
-            if block.get("type") != 0:   # text blocks only (skip images, etc.)
+            if block.get("type") != 0:   # text blocks only
                 continue
             bbox = block.get("bbox")
             if not bbox:
@@ -210,10 +195,8 @@ def detect_header_footer_bounds(pdf_document,
 
     def resolve_bound_fraction(candidates, want_max):
         """
-        Picks the candidate normalized-text group with the most page hits
-        (provided it clears min_pages_required) and returns the extreme
-        y-fraction (max for header extents, min for footer extents) across
-        its occurrences. Returns None if nothing clears the threshold.
+        Returns the y-fraction of the candidate group with the most page hits
+        (provided it clears min_pages_required), or None if nothing qualifies.
         """
         best_norm, best_hits = None, []
         for norm, hits in candidates.items():
@@ -237,7 +220,6 @@ def detect_header_footer_bounds(pdf_document,
         bounds[page_num] = (page_height * h_frac, page_height * f_frac)
 
     return bounds
-# ─────────────────────────────────────────────────────────────────────────────
 
 
 def extract_words_with_styles(pdf_document, ignore_ligatures=True,
@@ -248,11 +230,9 @@ def extract_words_with_styles(pdf_document, ignore_ligatures=True,
     for page_num, page in enumerate(pdf_document):
         page.remove_rotation()
 
-        # ── header/footer exclusion bounds for this page ───────────────────
         header_max_y, footer_min_y = (None, None)
         if header_footer_bounds is not None:
             header_max_y, footer_min_y = header_footer_bounds.get(page_num, (None, None))
-        # ─────────────────────────────────────────────────────────────────
 
         if ignore_ligatures:
             words_data = page.get_text("words", flags=0)
@@ -266,20 +246,18 @@ def extract_words_with_styles(pdf_document, ignore_ligatures=True,
             x0, y0, x1, y1, word_text, block_no, _, _ = word_info[:8]
             word_center_y = (y0 + y1) / 2
 
-            # ── blank-space / lone-punctuation fix ────────────────────────
+            # Skip blank / lone-punctuation tokens to avoid false-positive diffs.
             _stripped = word_text.strip()
             if not _stripped:
                 continue
             if re.fullmatch(r'[.,:;!?\u2026\u2022]+', _stripped):
                 continue
-            # ─────────────────────────────────────────────────────────────
 
-            # ── header/footer exclusion ────────────────────────────────────
+            # Skip words that fall inside the detected header/footer zone.
             if header_max_y is not None and y1 <= header_max_y:
                 continue
             if footer_min_y is not None and y0 >= footer_min_y:
                 continue
-            # ─────────────────────────────────────────────────────────────
 
             added_to_existing_line = False
 
@@ -346,12 +324,11 @@ def helper_case_quotes(words_data1, words_data2, case_insensitive, ignore_quotes
         a_compare = [nq(w) for w in a_compare]
         b_compare = [nq(w) for w in b_compare]
 
-    # ── blank-space / trailing-punctuation fix ────────────────────────────
+    # Strip trailing punctuation to avoid false-positive diffs on sentence ends.
     a_compare = [w.strip() for w in a_compare]
     b_compare = [w.strip() for w in b_compare]
     a_compare = [re.sub(r'[.,:;!?]+$', '', w) for w in a_compare]
     b_compare = [re.sub(r'[.,:;!?]+$', '', w) for w in b_compare]
-    # ─────────────────────────────────────────────────────────────────────
 
     return a_compare, b_compare
 
@@ -361,10 +338,8 @@ def align_words_with_difflib(words_data1, words_data2,
                               highlight_scanned=False):
     """
     Align two word lists using difflib.
-
-    highlight_scanned=True  → unchanged (equal) words are tagged "yellow"
-                               so that every scanned token gets some annotation.
-    highlight_scanned=False → unchanged words stay None (no highlight).
+    highlight_scanned=True tags equal (unchanged) words as "yellow" so every
+    successfully scanned token receives an annotation for OCR coverage review.
     """
     a_compare, b_compare = helper_case_quotes(
         words_data1, words_data2, case_insensitive, ignore_quotes
@@ -381,11 +356,9 @@ def align_words_with_difflib(words_data1, words_data2,
                 common_id = f"common-word-{common_word_id_counter}"
                 words_data1[idx1_current + k]["unique_id"]       = common_id
                 words_data2[idx2_current + k]["unique_id"]       = common_id
-                # ── NEW: optionally mark equal words yellow ───────────────
                 scan_color = "yellow" if highlight_scanned else None
                 words_data1[idx1_current + k]["highlight_color"] = scan_color
                 words_data2[idx2_current + k]["highlight_color"] = scan_color
-                # ─────────────────────────────────────────────────────────
                 common_word_id_counter += 1
             idx1_current += (i2 - i1)
             idx2_current += (j2 - j1)
@@ -415,15 +388,13 @@ def align_words_with_difflib(words_data1, words_data2,
     return words_data1, words_data2
 
 
-# ── Per-colour opacity table ──────────────────────────────────────────────────
-# Yellow is kept very subtle so it doesn't overwhelm red / green change marks.
+# Yellow is intentionally lighter than red/green so it doesn't obscure change marks.
 _COLOR_OPACITY = {
     "red":    0.30,
     "green":  0.30,
-    "yellow": 0.18,   # scanned-text highlight — intentionally lighter
+    "yellow": 0.18,
     "blue":   0.25,
 }
-# ─────────────────────────────────────────────────────────────────────────────
 
 
 def apply_annotations_to_pdf_pages(pdf_document, words_data, dark_mode=False):
@@ -458,13 +429,12 @@ def apply_annotations_to_pdf_pages(pdf_document, words_data, dark_mode=False):
             rect = fitz.Rect(word["x0"], word["y0"], word["x1"], word["y1"])
             highlights_by_color[word["highlight_color"]].append(rect)
 
-        # ── Draw yellow (scanned) first so red/green render on top ────────
+        # Draw yellow first so red/green change marks render on top.
         color_order = ["yellow", "blue", "red", "green"]
         ordered_items = sorted(
             highlights_by_color.items(),
             key=lambda kv: color_order.index(kv[0]) if kv[0] in color_order else 99
         )
-        # ─────────────────────────────────────────────────────────────────
 
         for color, rects_to_merge in ordered_items:
             if not rects_to_merge:
@@ -485,13 +455,11 @@ def apply_annotations_to_pdf_pages(pdf_document, words_data, dark_mode=False):
 
             merged_rects.append(current_merged_rect)
 
-            # ── Colour map ────────────────────────────────────────────────
             rgb = (0.0, 0.0, 0.0)
             if   color == "red":    rgb = (1.0, 0.0,  0.0)
             elif color == "green":  rgb = (0.0, 1.0,  0.0)
-            elif color == "yellow": rgb = (1.0, 0.95, 0.0)   # warm yellow
+            elif color == "yellow": rgb = (1.0, 0.95, 0.0)
             elif color == "blue":   rgb = (0.0, 0.5,  1.0)
-            # ─────────────────────────────────────────────────────────────
 
             opacity = _COLOR_OPACITY.get(color, 0.30)
 
@@ -532,8 +500,6 @@ def calculate_absolute_y(word, page_heights, PAGE_PADDING=10):
     return y_start + word["y0"]
 
 
-# ── Flask Routes ──────────────────────────────────────────────────────────────
-
 @app.route('/')
 def index():
     return render_template('index.html')
@@ -548,15 +514,12 @@ def compare():
         orig_file = request.files['original']
         mod_file  = request.files['modified']
 
-        case_insensitive   = request.form.get('caseInsensitive',   'true')  == 'true'
-        ignore_quotes      = request.form.get('ignoreQuotes',      'true')  == 'true'
-        ignore_ligatures   = request.form.get('ignoreLigatures',   'true')  == 'true'
-        dark_mode          = request.form.get('darkMode',          'false') == 'true'
-        # ── NEW: highlight every scanned word, not just changed ones ──────
-        highlight_scanned  = request.form.get('highlightScanned',  'false') == 'true'
-        # ── NEW: exclude header/footer content from detection entirely ────
-        ignore_header_footer = request.form.get('ignoreHeaderFooter', 'true') == 'true'
-        # ─────────────────────────────────────────────────────────────────
+        case_insensitive     = request.form.get('caseInsensitive',    'true')  == 'true'
+        ignore_quotes        = request.form.get('ignoreQuotes',       'true')  == 'true'
+        ignore_ligatures     = request.form.get('ignoreLigatures',    'true')  == 'true'
+        dark_mode            = request.form.get('darkMode',           'false') == 'true'
+        highlight_scanned    = request.form.get('highlightScanned',   'false') == 'true'
+        ignore_header_footer = request.form.get('ignoreHeaderFooter', 'true')  == 'true'
 
         orig_path = os.path.join(
             TEMP_PDF_DIR, f"orig_{uuid.uuid4().hex}_{orig_file.filename}"
@@ -578,11 +541,10 @@ def compare():
         doc1 = fitz.open(orig_path)
         doc2 = fitz.open(mod_path)
 
-        # ── NEW: detect header/footer bounds per document (independently,
-        #    since the two files may use different templates/margins) ──────
+        # Detect header/footer bounds independently per document since each file
+        # may use different templates or margin sizes.
         bounds1 = detect_header_footer_bounds(doc1) if ignore_header_footer else None
         bounds2 = detect_header_footer_bounds(doc2) if ignore_header_footer else None
-        # ─────────────────────────────────────────────────────────────────
 
         words1 = extract_words_with_styles(doc1, ignore_ligatures, header_footer_bounds=bounds1)
         words2 = extract_words_with_styles(doc2, ignore_ligatures, header_footer_bounds=bounds2)
@@ -592,7 +554,6 @@ def compare():
             highlight_scanned=highlight_scanned,
         )
 
-        # ── Cache for /api/summarize ──────────────────────────────────────
         comparison_id = uuid.uuid4().hex
         _cache_put(
             comparison_id,
@@ -600,7 +561,6 @@ def compare():
             orig_file.filename, mod_file.filename,
             case_insensitive, ignore_quotes, ignore_ligatures,
         )
-        # ─────────────────────────────────────────────────────────────────
 
         out1_path = os.path.join(TEMP_PDF_DIR, f"out1_{uuid.uuid4().hex}.pdf")
         out2_path = os.path.join(TEMP_PDF_DIR, f"out2_{uuid.uuid4().hex}.pdf")
@@ -635,25 +595,23 @@ def compare():
                                  "y": calculate_absolute_y(w2, page_heights_2)})
         changes.sort(key=lambda x: x["y"])
 
-        # ── Count scanned (yellow) words for the stats chip ───────────────
         scanned_words = (
             sum(1 for w in words1 if w["highlight_color"] == "yellow")
             if highlight_scanned else 0
         )
-        # ─────────────────────────────────────────────────────────────────
 
         doc1.close()
         doc2.close()
 
         return jsonify({
-            "images1":           images1_b64,
-            "images2":           images2_b64,
-            "common_words_map":  common_words_map,
-            "changes":           changes,
-            "insertions":        ins,
-            "deletions":         dels,
-            "scanned_words":     scanned_words,
-            "comparison_id":     comparison_id,
+            "images1":          images1_b64,
+            "images2":          images2_b64,
+            "common_words_map": common_words_map,
+            "changes":          changes,
+            "insertions":       ins,
+            "deletions":        dels,
+            "scanned_words":    scanned_words,
+            "comparison_id":    comparison_id,
         })
 
     except Exception as e:
@@ -665,13 +623,9 @@ def summarize():
     """
     Called by the frontend after /api/compare has rendered the diff images.
 
-    Request JSON:
-        { "comparison_id": "<hex from /api/compare response>" }
-
-    Response JSON:
-        { "ai_summary": "<markdown>", "ai_summary_error": null }
-      or
-        { "ai_summary": null, "ai_summary_error": "<message>" }
+    Request JSON:  { "comparison_id": "<hex>" }
+    Response JSON: { "ai_summary": "<markdown>", "ai_summary_error": null }
+                or { "ai_summary": null, "ai_summary_error": "<message>" }
     """
     body          = request.get_json(silent=True) or {}
     comparison_id = body.get("comparison_id")

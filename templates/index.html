@@ -483,13 +483,11 @@
         <label class="opt-label"><input type="checkbox" id="opt-ligatures" checked> Ignore 'f' ligatures</label>
         <label class="opt-label"><input type="checkbox" id="opt-dark"> Dark Mode Annotations</label>
 
-        <!-- ── NEW: Highlight Scanned Text toggle ─────────────────── -->
         <label class="opt-label opt-scan-label" title="Adds a soft yellow highlight over every word successfully scanned — lets you verify OCR coverage at a glance">
             <input type="checkbox" id="opt-scan">
             <span class="scan-dot"></span>
             Highlight Scanned Text
         </label>
-        <!-- ──────────────────────────────────────────────────────────── -->
     </div>
 
     <div class="drop-container">
@@ -544,12 +542,10 @@
         <span id="ins-count">0</span> inserted
     </span>
 
-    <!-- ── NEW: scanned-words chip ────────────────────────────── -->
     <span class="stat-chip chip-scan" id="chip-scan">
         <svg width="8" height="8" viewBox="0 0 8 8" aria-hidden="true"><circle cx="4" cy="4" r="3.5" fill="currentColor"/></svg>
         <span id="scan-count">0</span> scanned
     </span>
-    <!-- ─────────────────────────────────────────────────────────── -->
 
     <label class="sync-label" id="sync-scroll-label">
         <input type="checkbox" id="sync-scroll-toggle" checked onchange="handleSyncScrollToggle(this)">
@@ -612,7 +608,7 @@
   <div class="modal-box">
     <div class="modal-header">
       <span class="ai-modal-title">AI Change Summary</span>
-      <span class="ai-badge">GROQ</span>
+      <span class="ai-badge">AZURE</span>
       <button class="modal-close-btn" onclick="closeAiModal()" aria-label="Close">✕</button>
     </div>
     <div class="modal-body">
@@ -731,9 +727,7 @@ async function performCompare() {
     form.append('ignoreQuotes',     document.getElementById('opt-quotes').checked    ? 'true' : 'false');
     form.append('ignoreLigatures',  document.getElementById('opt-ligatures').checked ? 'true' : 'false');
     form.append('darkMode',         document.getElementById('opt-dark').checked      ? 'true' : 'false');
-    // ── NEW ────────────────────────────────────────────────────────────────────
     form.append('highlightScanned', highlightScanned ? 'true' : 'false');
-    // ──────────────────────────────────────────────────────────────────────────
 
     try {
         const res  = await fetch('/api/compare', { method: 'POST', body: form });
@@ -787,7 +781,6 @@ function updateStats(ins, dels, scannedCount, showScan) {
     document.getElementById('ins-count').textContent = ins;
     document.getElementById('stats-bar').classList.add('visible');
 
-    // ── scanned-words chip ────────────────────────────────────────────────────
     const chipScan = document.getElementById('chip-scan');
     if (showScan && scannedCount != null) {
         document.getElementById('scan-count').textContent = scannedCount;
@@ -795,7 +788,6 @@ function updateStats(ins, dels, scannedCount, showScan) {
     } else {
         chipScan.classList.remove('visible');
     }
-    // ─────────────────────────────────────────────────────────────────────────
 }
 
 function handleSyncScrollToggle(checkbox) { _syncScrollEnabled = checkbox.checked; }

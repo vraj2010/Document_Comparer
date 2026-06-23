@@ -1,51 +1,57 @@
-# Document Comparer
+# DocuDiff — AI-Powered Document Diff
 
-A Python desktop application built with `tkinter` for comparing PDF and Word documents. It visualizes differences between documents, handles clipboard pasting, and even uses `git diff` or `difflib` algorithms to highlight insertions, deletions, and moved text.
+A Flask web app that performs word-level diff annotation on PDF and Word documents, with an Azure OpenAI–powered change summary.
 
 ## Features
 
-- **Document Comparison:** Visualizes the differences between two PDF documents.
-- **Word to PDF Conversion:** Native conversion of Word documents to PDF without markup, leveraging Windows COM (`pywin32`).
-- **Clipboard Support:** Paste HTML or plain text from the clipboard and automatically convert it to a PDF for comparison.
-- **Diff Algorithms:** Utilizes `difflib` as a fallback or `git diff` (if available) for identifying differences between text fragments.
-- **Drag and Drop:** Easily drag and drop PDF files into the application using `tkinterdnd2`.
-- **Light/Dark Mode:** Toggle PDF highlights between Multiply and Exclusion blend modes.
+- Side-by-side PDF viewer with red/green word-level highlights (deleted / inserted)
+- Sync scroll and sync zoom across both panels
+- Change navigation (Prev / Next buttons)
+- Optional yellow "Highlight Scanned Text" overlay for OCR coverage verification
+- Header/footer auto-detection and exclusion from diff
+- AI Summary modal powered by Azure OpenAI (via LangChain)
+- Supports PDF, DOCX, DOC, RTF, TXT input (Word formats require Windows + pywin32)
 
-## Installation
+## Setup
 
-Ensure you have Python installed. You can set up the environment and install dependencies by running:
-
-```cmd
-python -m venv myenv
-myenv\Scripts\activate
+```bash
 pip install -r requirements.txt
-python myenv\Scripts\pywin32_postinstall.py -install
 ```
 
-### Dependencies
+Create a `.env` file in the project root:
 
-- `PyMuPDF` (`fitz`): For reading, writing, and highlighting PDFs.
-- `klembord`: For fetching rich text (HTML) from the clipboard.
-- `Pillow`: For image handling.
-- `tkinterdnd2`: For drag-and-drop support.
-- `pywin32`: For Word to PDF conversion (requires Microsoft Word on Windows).
-- `PyAutoGUI`: For the clickless panning feature.
+```env
+AZURE_OPENAI_API_KEY=<your key>
+AZURE_OPENAI_ENDPOINT=https://<your-resource>.openai.azure.com/
+AZURE_OPENAI_API_VERSION=2024-12-01-preview
+AZURE_OPENAI_DEPLOYMENT=gpt-4.1-mini
+```
 
-## Usage
+## Running
 
-Run the main application script:
-
-```cmd
+```bash
 python app.py
 ```
 
-> **Note:** The `app.py` file currently contains an incomplete script. The original text provided was truncated. Please update `app.py` with the complete script to run the application successfully.
+Open `http://localhost:5000` in your browser.
 
-## Building (Optional)
+## Project Structure
 
-You can build a standalone executable using `pyinstaller` on Windows:
-
-```cmd
-ren app.py app.pyw
-pyinstaller --noconfirm app.pyw
 ```
+app.py                  — Flask server, PDF extraction, diff annotation, routes
+azure_summary.py        — Azure OpenAI LangChain chain for AI change summaries
+langchain_pipeline.py   — Document loading and clause segmentation utilities
+AGENT_INSTRUCTIONS.md   — System prompt for the AI summarizer (hot-reloaded)
+templates/index.html    — Single-page UI (dark theme, inline JS/CSS)
+requirements.txt        — Python dependencies
+temp_pdfs/              — Temporary working directory (auto-created, gitignored)
+```
+
+## Notes
+
+- The `.env` file is gitignored — never commit it.
+- `temp_pdfs/` is gitignored — annotated PDFs are written here during processing.
+- Word-to-PDF conversion (`convert_word_to_pdf_no_markup`) requires Windows and pywin32.
+- The AI Summary feature requires valid Azure OpenAI credentials in `.env`.
+- `AGENT_INSTRUCTIONS.md` is loaded on every summary request — edit it to adjust
+  AI tone or domain rules without restarting the server.

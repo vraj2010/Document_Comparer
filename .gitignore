@@ -1,2 +1,4 @@
 .env
-temp_pdfs
+temp_pdfs/
+__pycache__/
+*.pyc

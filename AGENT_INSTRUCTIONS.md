@@ -1,6 +1,6 @@
 # Agent Instructions
 
-These instructions are loaded automatically by `langchain_pipeline.py` to control the TONE and STYLE of the summary.
+These instructions are loaded automatically by `azure_summary.py` to control the TONE and STYLE of the summary.
 
 ## CRITICAL RULE 1 — Single Section Output
 
