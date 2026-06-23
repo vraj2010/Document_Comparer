@@ -4,19 +4,8 @@ PyMuPDF
 klembord
 Pillow
 pywin32
-
-# ── [NEW] LangChain core ──────────────────────────────────────────────────────
-langchain>=0.3.0
-langchain-core>=0.3.0
-
-# ── [NEW] LangChain community (PyMuPDFLoader, Docx2txtLoader) ────────────────
-langchain-community>=0.3.0
-
-# ── [NEW] Groq LLM provider for LangChain ────────────────────────────────────
-langchain-groq>=0.2.0
-
-# ── [NEW] DOCX text extraction (used by Docx2txtLoader) ──────────────────────
-docx2txt
-
-# ── [NEW] .env support for GROQ_API_KEY ──────────────────────────────────────
+langchain
+langchain-openai
+langchain-core
 python-dotenv
+openai
