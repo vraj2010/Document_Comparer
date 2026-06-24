@@ -451,6 +451,48 @@
         .ai-content.active { display: block; }
         .spinner-sm { width: 14px; height: 14px; border: 2px solid var(--border); border-top-color: var(--amber); border-radius: 50%; animation: spin 0.8s linear infinite; flex-shrink: 0; }
 
+        /* ── Token Usage Panel (below AI summary) ─────────────────── */
+        .token-usage {
+            display: none;
+            margin-top: 16px;
+            padding-top: 14px;
+            border-top: 1px solid var(--border-muted);
+        }
+        .token-usage.active { display: block; }
+        .token-usage-title {
+            font-size: 10px;
+            font-weight: 700;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            margin-bottom: 9px;
+        }
+        .token-usage-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+            gap: 8px;
+        }
+        .token-stat {
+            background: var(--surface-2);
+            border: 1px solid var(--border-muted);
+            border-radius: var(--radius);
+            padding: 8px 10px;
+        }
+        .token-stat-label {
+            font-size: 10px;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            margin-bottom: 3px;
+        }
+        .token-stat-value {
+            font-size: 16px;
+            font-weight: 600;
+            font-family: var(--font-mono);
+            color: var(--text);
+        }
+        .token-stat.is-total .token-stat-value { color: var(--amber); }
+
         @keyframes spin { to { transform: rotate(360deg); } }
     </style>
 </head>
@@ -608,13 +650,35 @@
   <div class="modal-box">
     <div class="modal-header">
       <span class="ai-modal-title">AI Change Summary</span>
-      <span class="ai-badge">AZURE</span>
+      <span class="ai-badge">OPENAI</span>
       <button class="modal-close-btn" onclick="closeAiModal()" aria-label="Close">✕</button>
     </div>
     <div class="modal-body">
       <div class="ai-loading" id="ai-loading"><div class="spinner spinner-sm"></div>Generating summary…</div>
       <div class="ai-error"   id="ai-error"></div>
       <div class="ai-content" id="ai-content"></div>
+
+      <div class="token-usage" id="token-usage">
+        <div class="token-usage-title">Token Usage (Cost Drivers)</div>
+        <div class="token-usage-grid">
+          <div class="token-stat">
+            <div class="token-stat-label">Input Tokens</div>
+            <div class="token-stat-value" id="tok-input">–</div>
+          </div>
+          <div class="token-stat">
+            <div class="token-stat-label">Output Tokens</div>
+            <div class="token-stat-value" id="tok-output">–</div>
+          </div>
+          <div class="token-stat is-total">
+            <div class="token-stat-label">Total Tokens</div>
+            <div class="token-stat-value" id="tok-total">–</div>
+          </div>
+          <div class="token-stat">
+            <div class="token-stat-label">Prompt Template Tokens</div>
+            <div class="token-stat-value" id="tok-template">–</div>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 </div>
@@ -934,6 +998,26 @@ function setAiState(state, text) {
     contentEl.classList.toggle('active', state === 'content');
     if (state === 'error')   errorEl.textContent   = text || '';
     if (state === 'content') contentEl.textContent = text || '';
+    // Token panel only ever shows alongside a successful summary; any other
+    // state (loading/error/idle) hides it and resets the numbers.
+    if (state !== 'content') setTokenUsage(null);
+}
+
+function setTokenUsage(usage) {
+    const panel = document.getElementById('token-usage');
+    if (!usage) {
+        panel.classList.remove('active');
+        ['tok-input', 'tok-output', 'tok-total', 'tok-template'].forEach(
+            id => document.getElementById(id).textContent = '–'
+        );
+        return;
+    }
+    const fmt = (n) => (typeof n === 'number' ? n.toLocaleString() : '–');
+    document.getElementById('tok-input').textContent    = fmt(usage.input_tokens);
+    document.getElementById('tok-output').textContent   = fmt(usage.output_tokens);
+    document.getElementById('tok-total').textContent    = fmt(usage.total_tokens);
+    document.getElementById('tok-template').textContent = fmt(usage.prompt_template_tokens);
+    panel.classList.add('active');
 }
 
 async function fetchSummary(comparisonId) {
@@ -950,6 +1034,7 @@ async function fetchSummary(comparisonId) {
             return;
         }
         setAiState('content', data.ai_summary || '(No summary returned.)');
+        setTokenUsage(data.token_usage || null);
     } catch (err) {
         setAiState('error', '⚠ Network error: ' + err.message);
     }

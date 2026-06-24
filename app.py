@@ -624,8 +624,13 @@ def summarize():
     Called by the frontend after /api/compare has rendered the diff images.
 
     Request JSON:  { "comparison_id": "<hex>" }
-    Response JSON: { "ai_summary": "<markdown>", "ai_summary_error": null }
-                or { "ai_summary": null, "ai_summary_error": "<message>" }
+    Response JSON: { "ai_summary": "<markdown>", "ai_summary_error": null,
+                      "token_usage": { "input_tokens": int,
+                                        "output_tokens": int,
+                                        "total_tokens": int,
+                                        "prompt_template_tokens": int } }
+                or { "ai_summary": null, "ai_summary_error": "<message>",
+                      "token_usage": null }
     """
     body          = request.get_json(silent=True) or {}
     comparison_id = body.get("comparison_id")
@@ -642,10 +647,11 @@ def summarize():
                 "It may have already been summarized or the server restarted. "
                 "Run the comparison again."
             ),
+            "token_usage": None,
         }), 404
 
     try:
-        summary = generate_change_summary(
+        result = generate_change_summary(
             cached["words1"],
             cached["words2"],
             doc_a            = cached["name_a"],
@@ -654,15 +660,24 @@ def summarize():
             ignore_quotes    = cached["ignore_quotes"],
             ignore_ligatures = cached["ignore_ligatures"],
         )
-        return jsonify({"ai_summary": summary, "ai_summary_error": None})
+        return jsonify({
+            "ai_summary":       result["summary"],
+            "ai_summary_error": None,
+            "token_usage":      result["token_usage"],
+        })
 
     except AzureSummarizerError as e:
-        return jsonify({"ai_summary": None, "ai_summary_error": str(e)})
+        return jsonify({
+            "ai_summary":       None,
+            "ai_summary_error": str(e),
+            "token_usage":      None,
+        })
 
     except Exception as e:
         return jsonify({
             "ai_summary":       None,
             "ai_summary_error": f"Unexpected error: {e}",
+            "token_usage":      None,
         })
 
 

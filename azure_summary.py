@@ -23,7 +23,6 @@ from typing import Optional
 
 from langchain_openai import AzureChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.output_parsers import StrOutputParser
 
 
 INSTRUCTIONS_PATH = os.path.join(os.path.dirname(__file__), "AGENT_INSTRUCTIONS.md")
@@ -101,6 +100,35 @@ def tag_words_with_clause(words_data):
 
 class AzureSummarizerError(Exception):
     pass
+
+
+@dataclass
+class TokenUsage:
+    """
+    Token-count cost drivers for a single /api/summarize call.
+
+    input_tokens            — tokens in the prompt sent to the model
+                               (system instructions + human message + payload)
+    output_tokens           — tokens in the generated summary response
+    total_tokens            — input_tokens + output_tokens
+    prompt_template_tokens  — tokens consumed by the fixed system/instruction
+                               prefix alone (AGENT_INSTRUCTIONS.md), i.e. the
+                               portion of input_tokens that is constant
+                               overhead regardless of which documents are
+                               being compared
+    """
+    input_tokens:           int = 0
+    output_tokens:          int = 0
+    total_tokens:           int = 0
+    prompt_template_tokens: int = 0
+
+    def to_dict(self) -> dict:
+        return {
+            "input_tokens":           self.input_tokens,
+            "output_tokens":          self.output_tokens,
+            "total_tokens":           self.total_tokens,
+            "prompt_template_tokens": self.prompt_template_tokens,
+        }
 
 
 @dataclass
@@ -338,7 +366,7 @@ def _validate_config():
 
 def _build_chain():
     """
-    Constructs the LCEL chain: ChatPromptTemplate | AzureChatOpenAI | StrOutputParser
+    Constructs the prompt template and the AzureChatOpenAI client.
 
     Parameters match the organisation's deployment settings exactly:
         api_version           = AZURE_OPENAI_API_VERSION  (from .env)
@@ -346,6 +374,13 @@ def _build_chain():
         azure_deployment      = AZURE_OPENAI_DEPLOYMENT   (from .env)
         max_completion_tokens = AZURE_MAX_TOKENS          (default 13107)
         temperature / top_p / penalties = org defaults
+
+    Returns (prompt, llm, system_prompt) instead of a single LCEL chain
+    piped through StrOutputParser, because StrOutputParser discards the
+    AIMessage object — and with it, the `usage_metadata` (input/output/
+    total token counts) we need to report alongside the summary. We also
+    return the raw system_prompt text so callers can measure its token
+    count on its own (the "prompt template tokens" / fixed overhead).
     """
     _validate_config()
     system_prompt = _load_instructions()
@@ -370,7 +405,40 @@ def _build_chain():
         presence_penalty      = 0.0,
     )
 
-    return prompt | llm | StrOutputParser()
+    return prompt, llm, system_prompt
+
+
+def _extract_token_usage(ai_message, llm, system_prompt) -> TokenUsage:
+    """
+    Pulls token counts off the AIMessage returned by the chain.
+
+    AzureChatOpenAI populates `usage_metadata` on every AIMessage with
+    {"input_tokens": ..., "output_tokens": ..., "total_tokens": ...} taken
+    straight from the Azure OpenAI API response (the actual billed counts —
+    not an estimate). `prompt_template_tokens` is computed separately via
+    the model's tokenizer since the API does not break that figure out on
+    its own; it represents the fixed system/instruction overhead that gets
+    sent on every single call regardless of which documents are compared.
+    """
+    usage = getattr(ai_message, "usage_metadata", None) or {}
+
+    input_tokens  = int(usage.get("input_tokens", 0) or 0)
+    output_tokens = int(usage.get("output_tokens", 0) or 0)
+    total_tokens  = int(usage.get("total_tokens", 0) or (input_tokens + output_tokens))
+
+    try:
+        prompt_template_tokens = llm.get_num_tokens(system_prompt)
+    except Exception:
+        # Tokenizer unavailable for this model/version — fall back to a
+        # rough whitespace-based estimate rather than failing the request.
+        prompt_template_tokens = len(system_prompt.split())
+
+    return TokenUsage(
+        input_tokens           = input_tokens,
+        output_tokens          = output_tokens,
+        total_tokens           = total_tokens,
+        prompt_template_tokens = prompt_template_tokens,
+    )
 
 
 def generate_change_summary(words1, words2,
@@ -378,12 +446,23 @@ def generate_change_summary(words1, words2,
                              doc_b="Document B",
                              case_insensitive=None,
                              ignore_quotes=None,
-                             ignore_ligatures=None) -> str:
+                             ignore_ligatures=None) -> dict:
     """
     Full pipeline: extract spans → build payload → invoke Azure LangChain chain.
 
     Called from the /api/summarize Flask route in app.py.
-    Returns a markdown-formatted amendment summary string.
+
+    Returns a dict:
+        {
+            "summary":     "<markdown-formatted amendment summary>",
+            "token_usage": {
+                "input_tokens":           int,
+                "output_tokens":          int,
+                "total_tokens":           int,
+                "prompt_template_tokens": int,
+            },
+        }
+
     Raises AzureSummarizerError on any failure so the route can return a
     clean JSON error instead of a 500 traceback.
     """
@@ -397,16 +476,19 @@ def generate_change_summary(words1, words2,
 
     if not payload["changes"]:
         normalized = any(v for v in payload.get("normalization", {}).values())
-        return (
+        no_diff_msg = (
             "No content differences were detected between the two documents"
             + (" (after normalization)." if normalized else ".")
         )
+        # No API call was made, so every cost driver is genuinely zero.
+        return {"summary": no_diff_msg, "token_usage": TokenUsage().to_dict()}
 
     payload_json = json.dumps(payload, ensure_ascii=False, indent=2)
 
     try:
-        chain   = _build_chain()
-        summary = chain.invoke({"payload": payload_json})
+        prompt, llm, system_prompt = _build_chain()
+        chain      = prompt | llm          # no StrOutputParser — keep the AIMessage
+        ai_message = chain.invoke({"payload": payload_json})
     except AzureSummarizerError:
         raise
     except Exception as e:
@@ -416,11 +498,14 @@ def generate_change_summary(words1, words2,
             "deployment name matches what exists in Azure AI Foundry."
         ) from e
 
-    if not summary or not summary.strip():
+    summary = (ai_message.content or "").strip()
+    if not summary:
         raise AzureSummarizerError(
             "Azure OpenAI returned an empty response. "
             "The deployment may be throttled or the prompt exceeded "
             "max_completion_tokens."
         )
 
-    return summary.strip()
+    token_usage = _extract_token_usage(ai_message, llm, system_prompt)
+
+    return {"summary": summary, "token_usage": token_usage.to_dict()}
